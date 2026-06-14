@@ -24,14 +24,25 @@ def load_users() -> dict:
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                users = json.load(f)
         except Exception:
-            pass
-    # First run: create hashed default
-    default_hash = hash_password("databridge2026")
-    users = {"admin": default_hash}
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
+            users = {}
+    else:
+        users = {}
+
+    changed = False
+    if not users:
+        users["admin"] = hash_password("databridge2026")
+        changed = True
+
+    # Ensure a public demo account exists for portfolio/Upwork visitors
+    if "demo" not in users:
+        users["demo"] = hash_password("demo2026")
+        changed = True
+
+    if changed:
+        save_users(users)
+
     return users
 
 def save_users(users: dict) -> None:
