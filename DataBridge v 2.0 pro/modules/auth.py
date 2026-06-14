@@ -55,17 +55,17 @@ def check_login(username: str, password: str) -> bool:
         return False
 
 def change_password(username: str, old_pw: str, new_pw: str) -> Tuple[bool, str]:
-    """Returns (success, message)"""
+    """Returns (success, message_key) — message_key is a T[lang] translation key."""
     if not check_login(username, old_pw):
-        return False, "❌ كلمة المرور الحالية غلط"
+        return False, "pw_current_wrong"
     if len(new_pw) < 8:
-        return False, "❌ كلمة المرور الجديدة لازم تكون 8 حروف على الأقل"
+        return False, "pw_new_too_short"
     if new_pw == old_pw:
-        return False, "❌ كلمة المرور الجديدة لازم تختلف عن الحالية"
+        return False, "pw_new_same_as_old"
     users = load_users()
     users[username] = hash_password(new_pw)
     save_users(users)
-    return True, "✅ تم تغيير كلمة المرور بنجاح"
+    return True, "pw_changed_success"
 
 def render_login(lang: str) -> bool:
     t = T[lang]

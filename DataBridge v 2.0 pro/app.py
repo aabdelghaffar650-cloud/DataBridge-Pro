@@ -341,28 +341,28 @@ with st.sidebar:
     # Logout
     st.markdown(f"<div style='font-size:0.75rem;color:#555;'>👤 {st.session_state.get('current_user','')}</div>", unsafe_allow_html=True)
 
-    if st.button("🔑 تغيير كلمة المرور", use_container_width=True, key="toggle_pw"):
+    if st.button(t("change_password_btn"), use_container_width=True, key="toggle_pw"):
         st.session_state["show_change_pw"] = not st.session_state["show_change_pw"]
 
     if st.session_state["show_change_pw"]:
         with st.form("change_pw_form"):
-            old_pw  = st.text_input("كلمة المرور الحالية", type="password", key="old_pw")
-            new_pw  = st.text_input("كلمة المرور الجديدة", type="password", key="new_pw")
-            new_pw2 = st.text_input("تأكيد كلمة المرور", type="password", key="new_pw2")
-            submitted = st.form_submit_button("💾 حفظ", use_container_width=True)
+            old_pw  = st.text_input(t("current_password"), type="password", key="old_pw")
+            new_pw  = st.text_input(t("new_password"), type="password", key="new_pw")
+            new_pw2 = st.text_input(t("confirm_password"), type="password", key="new_pw2")
+            submitted = st.form_submit_button(t("save_btn"), use_container_width=True)
             if submitted:
                 if new_pw != new_pw2:
-                    st.error("❌ كلمتا المرور غير متطابقتين")
+                    st.error(t("password_mismatch"))
                 else:
-                    ok, msg = change_password(
+                    ok, msg_key = change_password(
                         st.session_state.get("current_user", "admin"),
                         old_pw, new_pw
                     )
                     if ok:
-                        st.success(msg)
+                        st.success(t(msg_key))
                         st.session_state["show_change_pw"] = False
                     else:
-                        st.error(msg)
+                        st.error(t(msg_key))
 
     st.markdown("---")
     if st.button(f"🚪 {t('logout')}", use_container_width=True, key="logout_btn"):
