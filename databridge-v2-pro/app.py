@@ -647,7 +647,7 @@ if "تحويل" in _upload_mode or "Convert" in _upload_mode:
 # ── Direct Upload Mode ──
 else:
     hiv_file = st.file_uploader(t("upload_label"), type=["xlsx"], key="hiv_upload")
-    if hiv_file is not None:
+    if hiv_file is not None and hiv_file.file_id != st.session_state.get("_hiv_file_id"):
         try:
             validate_uploaded_file(hiv_file)
             _file_bytes = hiv_file.getvalue()
@@ -666,6 +666,7 @@ else:
             st.session_state["mapper_approved"] = False
             st.session_state["dq_issues"] = None
             st.session_state["hiv_file_name"] = _display_name
+            st.session_state["_hiv_file_id"] = hiv_file.file_id
         except Exception as e:
             st.error(f"{t('file_error')}: {e}")
 
