@@ -100,49 +100,52 @@ class CleanReport:
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
-    def to_rows(self) -> List[Dict[str, Any]]:
+    def to_rows(self, lang: str = "ar") -> List[Dict[str, Any]]:
+        from .settings import T
+        t = lambda key: T[lang].get(key, key)
+        c_check, c_result, c_type = t("rpt_col_check"), t("rpt_col_result"), t("rpt_col_type")
         rows: List[Dict[str, Any]] = [
-            {"الفحص": "حالة الفحص", "النتيجة": self.status, "النوع": "info"},
-            {"الفحص": "الشيت المكتشف", "النتيجة": self.detected_sheet or "الأول/المحدد", "النوع": "info"},
-            {"الفحص": "الصفوف قبل التنظيف", "النتيجة": self.original_rows, "النوع": "info"},
-            {"الفحص": "الأعمدة قبل التنظيف", "النتيجة": self.original_cols, "النوع": "info"},
-            {"الفحص": "الصفوف بعد التنظيف", "النتيجة": self.final_rows, "النوع": "info"},
-            {"الفحص": "الأعمدة بعد التنظيف", "النتيجة": self.final_cols, "النوع": "info"},
-            {"الفحص": "استهلاك الذاكرة MB", "النتيجة": round(self.memory_mb, 2), "النوع": "info"},
+            {c_check: t("rpt_check_status"), c_result: self.status, c_type: "info"},
+            {c_check: t("rpt_detected_sheet"), c_result: self.detected_sheet or t("rpt_first_or_selected"), c_type: "info"},
+            {c_check: t("rpt_rows_before"), c_result: self.original_rows, c_type: "info"},
+            {c_check: t("rpt_cols_before"), c_result: self.original_cols, c_type: "info"},
+            {c_check: t("rpt_rows_after"), c_result: self.final_rows, c_type: "info"},
+            {c_check: t("rpt_cols_after"), c_result: self.final_cols, c_type: "info"},
+            {c_check: t("rpt_memory_usage"), c_result: round(self.memory_mb, 2), c_type: "info"},
         ]
         if self.detected_header_row is not None:
-            rows.append({"الفحص": "صف العناوين المكتشف", "النتيجة": self.detected_header_row + 1, "النوع": "info"})
+            rows.append({c_check: t("rpt_detected_header_row"), c_result: self.detected_header_row + 1, c_type: "info"})
         if self.sheet_scores:
             scores = "; ".join(f"{k}: {v}" for k, v in sorted(self.sheet_scores.items(), key=lambda x: x[1], reverse=True)[:5])
-            rows.append({"الفحص": "ترتيب الشيتات", "النتيجة": scores, "النوع": "info"})
-        rows.append({"الفحص": "Mapping Profile", "النتيجة": self.organization_profile or "global", "النوع": "info"})
+            rows.append({c_check: t("rpt_sheet_ranking"), c_result: scores, c_type: "info"})
+        rows.append({c_check: "Mapping Profile", c_result: self.organization_profile or "global", c_type: "info"})
         accepted = sum(1 for d in self.mapping_decisions if d.action in {"accepted", "merged"})
         verify = sum(1 for d in self.mapping_decisions if d.action in {"verify", "review"})
         suspicious = sum(1 for d in self.mapping_decisions if d.action == "suspicious")
         unknown = sum(1 for d in self.mapping_decisions if d.action == "unknown")
-        rows.append({"الفحص": "نتيجة Auto Mapping", "النتيجة": f"Auto Accepted: {accepted} | Verify: {verify} | Suspicious: {suspicious} | Unknown: {unknown}", "النوع": "warning" if suspicious or unknown else "ok"})
+        rows.append({c_check: t("rpt_mapping_result"), c_result: f"Auto Accepted: {accepted} | Verify: {verify} | Suspicious: {suspicious} | Unknown: {unknown}", c_type: "warning" if suspicious or unknown else "ok"})
         if self.missing_core_columns:
-            rows.append({"الفحص": "أعمدة أساسية ناقصة", "النتيجة": ", ".join(self.missing_core_columns), "النوع": "error"})
+            rows.append({c_check: t("rpt_missing_core_cols"), c_result: ", ".join(self.missing_core_columns), c_type: "error"})
         if self.missing_optional_columns:
-            rows.append({"الفحص": "أعمدة مهمة غير موجودة", "النتيجة": ", ".join(self.missing_optional_columns), "النوع": "warning"})
+            rows.append({c_check: t("rpt_missing_optional_cols"), c_result: ", ".join(self.missing_optional_columns), c_type: "warning"})
         for col, count in self.invalid_dates.items():
             if count:
-                rows.append({"الفحص": f"تواريخ غير صالحة في {col}", "النتيجة": count, "النوع": "warning"})
+                rows.append({c_check: t("rpt_invalid_dates_in").format(col=col), c_result: count, c_type: "warning"})
         for col, count in self.negative_quantities.items():
             if count:
-                rows.append({"الفحص": f"كميات سالبة/غير منطقية في {col}", "النتيجة": count, "النوع": "warning"})
+                rows.append({c_check: t("rpt_negative_qty_in").format(col=col), c_result: count, c_type: "warning"})
         for issue in self.profile_issues:
-            rows.append({"الفحص": "Data Profile Validation", "النتيجة": issue.get("message", ""), "النوع": issue.get("type", "warning")})
+            rows.append({c_check: "Data Profile Validation", c_result: issue.get("message", ""), c_type: issue.get("type", "warning")})
         if self.dropped_empty_rows:
-            rows.append({"الفحص": "صفوف فارغة تم حذفها", "النتيجة": self.dropped_empty_rows, "النوع": "ok"})
+            rows.append({c_check: t("rpt_empty_rows_dropped"), c_result: self.dropped_empty_rows, c_type: "ok"})
         if self.standard_rows:
-            rows.append({"الفحص": "standard_df", "النتيجة": f"{self.standard_rows} صف × {self.standard_cols} عمود", "النوع": "ok"})
+            rows.append({c_check: "standard_df", c_result: t("rpt_standard_df_summary").format(rows=self.standard_rows, cols=self.standard_cols), c_type: "ok"})
         for msg in self.notes:
-            rows.append({"الفحص": "ملاحظة", "النتيجة": msg, "النوع": "info"})
+            rows.append({c_check: t("rpt_note"), c_result: t(msg), c_type: "info"})
         for msg in self.warnings:
-            rows.append({"الفحص": "تحذير", "النتيجة": msg, "النوع": "warning"})
+            rows.append({c_check: t("dq_severity_warning"), c_result: t(msg), c_type: "warning"})
         for msg in self.errors:
-            rows.append({"الفحص": "خطأ", "النتيجة": msg, "النوع": "error"})
+            rows.append({c_check: t("dq_severity_error"), c_result: t(msg), c_type: "error"})
         return rows
 
 
@@ -735,22 +738,22 @@ def clean_dataframe(df: pd.DataFrame) -> Tuple[pd.DataFrame, CleanReport]:
     unknown_count = sum(1 for d in report.mapping_decisions if d.action == "unknown")
 
     if report.memory_mb > 250:
-        report.warnings.append("استهلاك الذاكرة عالي؛ قد تكون الرسومات والتصدير أبطأ من المعتاد.")
+        report.warnings.append("msg_high_memory")
     if report.missing_core_columns:
         report.status = "needs_review"
-        report.errors.append("التحليل قد يكون غير كامل بسبب نقص أعمدة أساسية.")
+        report.errors.append("msg_incomplete_analysis")
     elif report.invalid_dates or report.negative_quantities or report.profile_issues or review_count or unknown_count:
         report.status = "warning"
         if report.invalid_dates:
-            report.warnings.append("تم تحويل التواريخ غير الصالحة إلى فراغ، ولن تدخل في فلاتر الشهر.")
+            report.warnings.append("msg_dates_converted_blank")
         if report.negative_quantities:
-            report.warnings.append("تم تحويل الكميات غير الرقمية إلى فراغ، والكميات السالبة موضحة في التقرير.")
+            report.warnings.append("msg_qty_converted_blank")
         if report.profile_issues:
-            report.warnings.append("Data Profile Validation اكتشف ربطًا مشكوكًا فيه بناءً على محتوى الأعمدة.")
+            report.warnings.append("msg_profile_validation_suspicious")
         if review_count or unknown_count:
-            report.warnings.append("فيه أعمدة تحتاج مراجعة Mapping قبل الاعتماد النهائي على كل الرسومات.")
+            report.warnings.append("msg_mapping_needs_review")
     else:
-        report.notes.append("تم تنظيف الملف وتجهيزه للتحليل بثقة عالية.")
+        report.notes.append("msg_cleaned_high_confidence")
 
     return out, report
 
@@ -801,23 +804,28 @@ def generate_standard_df(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def report_to_dataframe(report: Optional[CleanReport]) -> pd.DataFrame:
+def report_to_dataframe(report: Optional[CleanReport], lang: str = "ar") -> pd.DataFrame:
+    from .settings import T
+    t = lambda key: T[lang].get(key, key)
     if report is None:
-        return pd.DataFrame(columns=["الفحص", "النتيجة", "النوع"])
-    return pd.DataFrame(report.to_rows())
+        return pd.DataFrame(columns=[t("rpt_col_check"), t("rpt_col_result"), t("rpt_col_type")])
+    return pd.DataFrame(report.to_rows(lang))
 
 
-def mapping_report_to_dataframe(report: Optional[CleanReport]) -> pd.DataFrame:
+def mapping_report_to_dataframe(report: Optional[CleanReport], lang: str = "ar") -> pd.DataFrame:
+    from .settings import T
+    t = lambda key: T[lang].get(key, key)
+    cols = [t("rpt_col_original"), t("rpt_col_canonical"), t("rpt_col_confidence"), t("rpt_col_method"), t("gap_status"), t("rpt_note")]
     if report is None:
-        return pd.DataFrame(columns=["العمود الأصلي", "العمود القياسي", "الثقة", "الطريقة", "الحالة", "ملاحظة"])
+        return pd.DataFrame(columns=cols)
     return pd.DataFrame([
         {
-            "العمود الأصلي": d.original,
-            "العمود القياسي": d.canonical,
-            "الثقة": d.confidence,
-            "الطريقة": d.method,
-            "الحالة": _action_label(d.action),
-            "ملاحظة": d.note,
+            cols[0]: d.original,
+            cols[1]: d.canonical,
+            cols[2]: d.confidence,
+            cols[3]: d.method,
+            cols[4]: _action_label(d.action),
+            cols[5]: d.note,
         }
         for d in report.mapping_decisions
     ])

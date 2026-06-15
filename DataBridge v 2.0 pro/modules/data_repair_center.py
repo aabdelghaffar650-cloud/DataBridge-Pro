@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Tuple
 import pandas as pd
 import streamlit as st
 
+from .settings import T
+
 
 FORBIDDEN_KEYWORDS = [
     "تاريخ الزيارة", "زيارة متابعة", "follow-up date", "follow up date", "visit date",
@@ -291,9 +293,11 @@ def apply_repairs(df: pd.DataFrame, selected_ids: List[str], suggestions: List[R
     return out, summary
 
 
-def render_data_repair_center(df: pd.DataFrame) -> pd.DataFrame | None:
-    st.markdown("### 🛠 Data Repair Center")
-    st.caption("كل الإصلاحات هنا تحتاج موافقتك. لا يتم تنفيذ أي Fill أو تخمين تلقائي على الملف بالكامل.")
+def render_data_repair_center(df: pd.DataFrame, lang: str = "ar") -> pd.DataFrame | None:
+    t = lambda key: T[lang].get(key, key)
+
+    st.markdown(f"### {t('repair_center_title')}")
+    st.caption(t("repair_caption"))
 
     examples = build_error_examples(df)
     suggestions = build_repair_suggestions(df)
@@ -310,11 +314,11 @@ def render_data_repair_center(df: pd.DataFrame) -> pd.DataFrame | None:
                     if 0 <= idx < len(df):
                         st.dataframe(df.iloc[[idx]], use_container_width=True)
     else:
-        st.success("✅ لا توجد أمثلة أخطاء واضحة في التواريخ/الكميات/نعم-لا.")
+        st.success(t("repair_no_examples"))
 
     st.markdown("#### 2) Smart Repair Suggestions")
     if not suggestions:
-        st.info("لا توجد إصلاحات مقترحة حاليًا.")
+        st.info(t("repair_no_suggestions"))
         return None
 
     selected: List[str] = []
@@ -324,12 +328,12 @@ def render_data_repair_center(df: pd.DataFrame) -> pd.DataFrame | None:
         if checked:
             selected.append(s.id)
 
-    st.warning("🚫 ممنوع الإصلاح التلقائي للحقول الحساسة: Visit Date / Follow-up Date / HIV Result / Referral / Gender / Age / Beneficiary Code. التواريخ يتم تحويل القابل للقراءة فقط بدون ملء أو تخمين.")
+    st.warning(t("repair_forbidden_warning"))
 
     if st.button("🚀 Apply Suggested Fixes", use_container_width=True, disabled=not selected, key="apply_data_repairs"):
         repaired, summary = apply_repairs(df, selected, suggestions)
         st.session_state["last_repair_summary"] = summary
-        st.success("✅ تم تنفيذ الإصلاحات المختارة فقط.")
+        st.success(t("repair_applied_success"))
         return repaired
 
     summary = st.session_state.get("last_repair_summary")

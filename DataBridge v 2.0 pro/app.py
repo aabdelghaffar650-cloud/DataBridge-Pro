@@ -251,6 +251,18 @@ def t(key: str) -> str:
     return T[st.session_state["lang"]].get(key, key)
 
 
+# Translation keys for the fixed set of service/intervention category labels
+# used as chart category names (data is keyed by their Arabic canonical names).
+SERVICE_LABEL_KEYS = {
+    'زهري': 'svc_syphilis',
+    'دعم نفسي': 'svc_psycho_support',
+    'ميثادون': 'svc_methadone',
+    'واقيات': 'svc_condoms',
+    'مزلقات': 'svc_lubricants',
+    'سرنجات': 'svc_syringes',
+}
+
+
 #  LOGIN GATE
 # ════════════════════════════════════════
 if not st.session_state["authenticated"]:
@@ -403,13 +415,13 @@ def _convert_idus_204_source_bytes(file_bytes: bytes) -> Tuple[pd.DataFrame, Any
     _dfs.columns = range(len(_dfs.columns))
 
     if _dfs.shape[1] < 180:
-        raise ValueError("هذا الملف لا يبدو الشيت الأساسي 204 عمود.")
+        raise ValueError(t("err_not_204_sheet"))
 
     _last_code = _dfs[15].last_valid_index() if 15 in _dfs.columns else None
     _last_date = _dfs[2].last_valid_index() if 2 in _dfs.columns else None
     _valid_last = [x for x in [_last_code, _last_date] if x is not None]
     if not _valid_last:
-        raise ValueError("لم يتم العثور على تاريخ الزيارة أو الكود المجمع داخل الشيت الأساسي.")
+        raise ValueError(t("err_no_visit_date_or_code"))
     _last_row = max(_valid_last)
     _dfs = _dfs.iloc[:_last_row + 1].copy()
 
@@ -511,7 +523,7 @@ _upload_mode = st.radio(
 if "تحويل" in _upload_mode or "Convert" in _upload_mode:
     st.markdown(f"""
     <div class="info-box">
-    🔄 ارفع الشيت الأساسي (204 عمود) وسيتحول تلقائياً إلى هيكل شيت البرنامج
+    {t('convert_upload_hint')}
     </div>
     """, unsafe_allow_html=True)
 
@@ -527,7 +539,7 @@ if "تحويل" in _upload_mode or "Convert" in _upload_mode:
 
             if st.button("🔄 تحويل وتحليل" if st.session_state["lang"] == "ar" else "🔄 Convert & Analyze",
                          key="convert_main", use_container_width=False):
-                with st.spinner("⚙️ جاري التحويل..."):
+                with st.spinner(t("converting_spinner")):
                     import warnings as _ww
                     _ww.filterwarnings("ignore")
 
@@ -608,7 +620,7 @@ if "تحويل" in _upload_mode or "Convert" in _upload_mode:
                     st.session_state["standard_df"] = generate_standard_df(_cv)
                     st.session_state["mapper_approved"] = False
                     st.session_state["dq_issues"] = None
-                    st.session_state["hiv_file_name"] = f"[محوّل] {_src_up.name}"
+                    st.session_state["hiv_file_name"] = f"{t('converted_prefix')} {_src_up.name}"
 
                     # Download converted file
                     _buf_cv = io.BytesIO()
@@ -616,9 +628,9 @@ if "تحويل" in _upload_mode or "Convert" in _upload_mode:
                         _cv.to_excel(_wr, index=False, sheet_name='IDUs Database')
                     _buf_cv.seek(0)
 
-                st.success(f"✅ تم التحويل! {len(_cv):,} سجل جاهز للتحليل")
+                st.success(f"✅ {t('convert_success')} {len(_cv):,} {t('convert_success_records')}")
                 st.download_button(
-                    "⬇️ تحميل الشيت المحوّل",
+                    t("download_converted_sheet"),
                     data=_buf_cv.getvalue(),
                     file_name=f"IDUs_Converted_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -642,8 +654,8 @@ else:
 
             if _looks_like_idus_204_source(_file_bytes):
                 hdf_new, _clean_report = _convert_idus_204_source_bytes(_file_bytes)
-                st.info("🔄 تم اكتشاف الشيت الأساسي 204 عمود وتحويله تلقائيًا قبل التحليل.")
-                _display_name = f"[محوّل تلقائي] {hiv_file.name}"
+                st.info(t("auto_converted_detected"))
+                _display_name = f"{t('converted_auto_prefix')} {hiv_file.name}"
             else:
                 hdf_new, _clean_report = smart_read_excel(io.BytesIO(_file_bytes))
                 _display_name = hiv_file.name
@@ -671,14 +683,14 @@ hdf = st.session_state["hdf"]
 # ── Smart Data Cleaner status ──
 _clean_report = st.session_state.get("data_clean_report")
 if _clean_report is not None:
-    _report_df = report_to_dataframe(_clean_report)
-    _has_errors = bool((_report_df["النوع"] == "error").any()) if not _report_df.empty else False
-    _has_warnings = bool((_report_df["النوع"] == "warning").any()) if not _report_df.empty else False
+    _report_df = report_to_dataframe(_clean_report, st.session_state["lang"])
+    _has_errors = _clean_report.status == "needs_review"
+    _has_warnings = _clean_report.status == "warning"
     _box_icon = "❌" if _has_errors else ("⚠️" if _has_warnings else "✅")
-    _box_title = "Smart Data Cleaner — فحص وتنظيف الملف"
+    _box_title = t("smart_cleaner_title")
     with st.expander(f"{_box_icon} {_box_title}", expanded=_has_errors or _has_warnings):
         st.dataframe(_report_df, use_container_width=True, height=260)
-        _mapping_df = mapping_report_to_dataframe(_clean_report)
+        _mapping_df = mapping_report_to_dataframe(_clean_report, st.session_state["lang"])
         if not _mapping_df.empty:
             _summary = get_mapping_summary(_clean_report)
             _accepted_count = int(_summary.get("accepted", 0))
@@ -689,36 +701,36 @@ if _clean_report is not None:
             _overall_conf = int(_summary.get("overall_confidence", 0))
             _conf_color = "#6bff8e" if _overall_conf >= 95 else ("#ffb74d" if _overall_conf >= 85 else ("#ff9800" if _overall_conf >= 70 else "#ff6b6b"))
 
-            st.markdown("**Auto Data Mapper — لوحة الثقة قبل الاعتماد**")
+            st.markdown(f"**{t('mapper_confidence_title')}**")
             st.markdown(f"""
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:0.8rem 0 1rem 0;">
               <div class="metric-card"><div class="label">🟢 Auto Accepted</div><div class="value" style="color:#6bff8e">{_accepted_count}</div><div class="sub">95%+ / Memory</div></div>
-              <div class="metric-card"><div class="label">🟡 Verify</div><div class="value" style="color:#ffb74d">{_verify_count}</div><div class="sub">85–94% غالبًا صحيح</div></div>
-              <div class="metric-card"><div class="label">🟠 Suspicious</div><div class="value" style="color:#ff9800">{_suspicious_count}</div><div class="sub">70–84% يحتاج انتباه</div></div>
-              <div class="metric-card"><div class="label">🔴 Unknown</div><div class="value" style="color:#ff6b6b">{_unknown_count}</div><div class="sub">أقل من 70%</div></div>
+              <div class="metric-card"><div class="label">🟡 Verify</div><div class="value" style="color:#ffb74d">{_verify_count}</div><div class="sub">{t('mapper_verify_sub')}</div></div>
+              <div class="metric-card"><div class="label">🟠 Suspicious</div><div class="value" style="color:#ff9800">{_suspicious_count}</div><div class="sub">{t('mapper_suspicious_sub')}</div></div>
+              <div class="metric-card"><div class="label">🔴 Unknown</div><div class="value" style="color:#ff6b6b">{_unknown_count}</div><div class="sub">{t('mapper_unknown_sub')}</div></div>
               <div class="metric-card"><div class="label">Overall Mapping Confidence</div><div class="value" style="color:{_conf_color}">{_overall_conf}%</div><div class="sub">Based on mapped fields</div></div>
             </div>
             """, unsafe_allow_html=True)
 
             if getattr(_clean_report, "profile_issues", None):
-                st.warning("⚠️ Data Profile Validation اكتشف ربطًا مشكوكًا فيه بناءً على محتوى الأعمدة، وليس الاسم فقط.")
+                st.warning(f"⚠️ {t('mapper_profile_warning')}")
 
-            st.markdown("**Auto Data Mapper — تقرير ربط الأعمدة**")
+            st.markdown(f"**{t('mapper_report_title')}**")
             st.dataframe(_mapping_df, use_container_width=True, height=260)
 
             _profile_name = getattr(_clean_report, "organization_profile", "global") or "global"
-            st.caption(f"Mapping Profile: {_profile_name} — عند الاعتماد سيتم حفظ الربط في AppData/DataBridge/mapping_memory.json لاستخدامه في المرات القادمة.")
+            st.caption(f"Mapping Profile: {_profile_name} — {t('mapper_profile_caption')}")
 
             if st.session_state.get("mapper_approved"):
-                st.success("✅ تم اعتماد ربط الأعمدة وحفظه في Mapping Memory. يمكنك الاعتماد على التحليل الحالي.")
-                if st.button("↩️ إلغاء الاعتماد وإعادة المراجعة", key="unapprove_mapper"):
+                st.success(t("mapper_approved_success"))
+                if st.button(t("mapper_unapprove_btn"), key="unapprove_mapper"):
                     st.session_state["mapper_approved"] = False
                     st.rerun()
             else:
-                st.warning("راجع ربط الأعمدة أولًا، ثم اضغط اعتماد قبل ظهور التحليل والرسومات.")
-                approve_label = "✅ اعتماد الربط وتشغيل التحليل"
+                st.warning(t("mapper_review_warning"))
+                approve_label = t("mapper_approve_btn")
                 if _verify_count or _suspicious_count or _unknown_count:
-                    approve_label = f"✅ اعتماد الربط رغم وجود Verify ({_verify_count}) / Suspicious ({_suspicious_count}) / Unknown ({_unknown_count})"
+                    approve_label = f"{t('mapper_approve_btn_with_review')} (Verify ({_verify_count}) / Suspicious ({_suspicious_count}) / Unknown ({_unknown_count}))"
                 if st.button(approve_label, key="approve_mapper", use_container_width=True):
                     _saved_mappings = save_mapping_memory_from_report(_clean_report, include_review=True)
                     st.session_state["mapper_approved"] = True
@@ -728,14 +740,14 @@ if _clean_report is not None:
             st.session_state["mapper_approved"] = True
 
         if _has_errors:
-            st.error("فيه أعمدة أساسية ناقصة. راجع التقرير قبل الاعتماد على الأرقام.")
+            st.error(t("cleaner_missing_core_error"))
         elif _has_warnings:
-            st.warning("تم تنظيف الملف، لكن فيه تحذيرات قد تؤثر على فلاتر الشهر أو بعض الرسومات.")
+            st.warning(t("cleaner_warnings_warning"))
         else:
-            st.success("تم تنظيف الملف وتجهيزه للتحليل بنجاح.")
+            st.success(t("cleaner_success"))
 
 if _clean_report is not None and not st.session_state.get("mapper_approved", False):
-    st.info("⏸️ التحليل متوقف مؤقتًا لحين اعتماد ربط الأعمدة من تقرير Auto Data Mapper بالأعلى.")
+    st.info(t("analysis_paused_info"))
     st.stop()
 
 _month_filter_kind = "all"
@@ -781,7 +793,7 @@ if date_col_main:
                     (hdf[date_col_main].dt.to_period('M').astype(str) <= _to_m)
                 ].copy()
         with _mf3:
-            st.markdown(f'<div class="info-box" style="margin-top:1.5rem;">📊 السجلات المعروضة: <b style="color:#7c6aff">{len(hdf):,}</b> من إجمالي <b>{len(st.session_state["hdf"]):,}</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="info-box" style="margin-top:1.5rem;">📊 {t("records_displayed")}: <b style="color:#7c6aff">{len(hdf):,}</b> {t("of_total")} <b>{len(st.session_state["hdf"]):,}</b></div>', unsafe_allow_html=True)
         st.markdown("---")
 
 base_visits_total = len(hdf)
@@ -1162,25 +1174,25 @@ def build_monthly_summary_tables(base_df: pd.DataFrame, full_df: pd.DataFrame, v
     detailed_df = pd.DataFrame(detailed_rows, columns=['البيان', 'العدد', 'إجمالي الاستلامات', 'ملخص'])
 
     compact_rows = [
-        [base_visits_total + total_fu_visits, 'العدد'],
-        [base_visits_total, 'الوصول'],
-        [male_count, 'رجال'],
-        [total_fu_visits, 'متابعه'],
-        [base_syr, 'سرنجات'],
-        [fu_syr, 'سرنجات متابعه'],
-        [base_lube, 'مزلقات'],
-        [fu_lube, 'متابعه مزلق'],
-        [base_cond, 'واقيات'],
-        [fu_cond, 'متابعة واق'],
-        [total_tests, 'اجمالي التحاليل'],
-        [total_fu_visits, 'متابعه'],
-        [negative_tests, 'سلبي'],
-        [positive_tests, 'ايجابي'],
-        ['غير متوفر', 'ايجابي تأكيدي'],
-        [psycho_count, 'دعم نفسي'],
-        [syphilis_count, 'زهري'],
+        [base_visits_total + total_fu_visits, t('tbl_count')],
+        [base_visits_total, t('tbl_reach')],
+        [male_count, t('tbl_men')],
+        [total_fu_visits, t('tbl_followup')],
+        [base_syr, t('tbl_syringes')],
+        [fu_syr, t('tbl_followup_syringes')],
+        [base_lube, t('tbl_lubricants')],
+        [fu_lube, t('tbl_followup_lubricant')],
+        [base_cond, t('tbl_condoms')],
+        [fu_cond, t('tbl_followup_condom')],
+        [total_tests, t('tbl_total_tests')],
+        [total_fu_visits, t('tbl_followup')],
+        [negative_tests, t('tbl_negative')],
+        [positive_tests, t('tbl_positive')],
+        [t('tbl_not_available'), t('tbl_confirmatory_positive')],
+        [psycho_count, t('tbl_psycho_support')],
+        [syphilis_count, t('tbl_syphilis')],
     ]
-    compact_df = pd.DataFrame(compact_rows, columns=['العدد', 'البيان'])
+    compact_df = pd.DataFrame(compact_rows, columns=[t('tbl_count'), t('tbl_item')])
     return detailed_df, compact_df
 
 summary_report_df, picture_table_df = build_monthly_summary_tables(hdf, st.session_state['hdf'], visit_chart_df)
@@ -1260,22 +1272,22 @@ st.markdown(f"""
 #  TABS
 # ════════════════════════════════════════
 _summary_tab_label = (
-    f"📋 ملخص شهر {_selected_month}"
+    f"{t('summary_tab_month_prefix')} {_selected_month}"
     if _month_filter_kind == "single" and _selected_month
-    else "📋 ملخص البيانات"
+    else t("summary_tab_default")
 )
 tab_data, tab_repair, tab_gaps, tab_stats, tab_summary, tab_export, tab_quality, tab_indicators, tab_ai, tab_settings, tab_converter = st.tabs([
     t("tab_data"),
-    "🛠 مركز إصلاح البيانات",
+    t("tab_repair"),
     t("tab_gaps"),
     t("tab_stats"),
     _summary_tab_label,
     t("tab_export"),
     t("tab_quality"),
-    "📈 Indicators",
-    "🤖 AI Assistant",
-    "⚙️ Settings",
-    "🔄 Source Converter",
+    t("tab_indicators"),
+    t("tab_ai"),
+    t("tab_settings"),
+    t("tab_converter"),
 ])
 
 # ──────────────────────────────────────
@@ -1388,6 +1400,7 @@ with tab_stats:
             test_counts.columns = ['النتيجة', 'العدد']
             fig = px.pie(test_counts, names='النتيجة', values='العدد',
                         title=t("chart_test"), template='plotly_dark',
+                        labels={'النتيجة': t('chart_label_result'), 'العدد': t('chart_label_count')},
                         color_discrete_sequence=['#7c6aff','#ff6b6b','#6bffb8'])
             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)')
             fig = show_pie_values(fig)
@@ -1413,6 +1426,7 @@ with tab_stats:
             _fu_title = t("chart_followup")
         fig2 = px.bar(fu_df, x='الحالة', y='العدد',
                      title=_fu_title, template='plotly_dark', text='العدد',
+                     labels={'الحالة': t('chart_label_status'), 'العدد': t('chart_label_count')},
                      color_discrete_sequence=['#7c6aff'])
         fig2.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)')
         fig2 = show_bar_values(fig2)
@@ -1427,9 +1441,10 @@ with tab_stats:
                 if label in visit_chart_df.columns:
                     svc_data[label] = int(visit_chart_df[label].fillna(False).astype(bool).sum())
         if svc_data:
-            svc_df = pd.DataFrame({'الخدمة': list(svc_data.keys()), 'العدد': list(svc_data.values())})
+            svc_df = pd.DataFrame({'الخدمة': [t(SERVICE_LABEL_KEYS[k]) for k in svc_data.keys()], 'العدد': list(svc_data.values())})
             fig3 = px.bar(svc_df, x='الخدمة', y='العدد',
                          title=t("chart_services"), template='plotly_dark',
+                         labels={'الخدمة': t('chart_label_service'), 'العدد': t('chart_label_count')},
                          color_discrete_sequence=['#7c6aff'])
             fig3.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)')
             fig3 = show_bar_values(fig3)
@@ -1442,6 +1457,7 @@ with tab_stats:
             age_counts.columns = ['الفئة العمرية', 'العدد']
             fig4 = px.bar(age_counts, x='الفئة العمرية', y='العدد',
                          title=t("chart_age"), template='plotly_dark',
+                         labels={'الفئة العمرية': t('chart_label_age_group'), 'العدد': t('chart_label_count')},
                          color_discrete_sequence=['#6bffb8'])
             fig4.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)')
             fig4 = show_bar_values(fig4)
@@ -1456,6 +1472,7 @@ with tab_stats:
             area_counts.columns = ['المنطقة', 'العدد']
             fig_area = px.bar(area_counts, x='المنطقة', y='العدد',
                              title=t("chart_area"), template='plotly_dark',
+                             labels={'المنطقة': t('chart_label_area'), 'العدد': t('chart_label_count')},
                              color_discrete_sequence=['#ff6b9d'])
             fig_area.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)')
             fig_area = show_bar_values(fig_area)
@@ -1468,6 +1485,7 @@ with tab_stats:
                 gov_counts.columns = ['المحافظة', 'العدد']
                 fig_gov = px.pie(gov_counts, names='المحافظة', values='العدد',
                                 title=t("chart_gov"), template='plotly_dark',
+                                labels={'المحافظة': t('chart_label_governorate'), 'العدد': t('chart_label_count')},
                                 color_discrete_sequence=px.colors.sequential.Purples_r)
                 fig_gov.update_layout(paper_bgcolor='rgba(0,0,0,0)')
                 fig_gov = show_pie_values(fig_gov)
@@ -1481,7 +1499,7 @@ with tab_stats:
             if label in visit_chart_df.columns and 'الفئة العمرية' in visit_chart_df.columns:
                 tmp = visit_chart_df[visit_chart_df[label].fillna(False).astype(bool)]
                 tmp = tmp.groupby('الفئة العمرية').size().reset_index(name='العدد')
-                tmp['الأداة'] = label
+                tmp['الأداة'] = t(SERVICE_LABEL_KEYS[label])
                 tmp.columns = ['الفئة العمرية', 'العدد', 'الأداة']
                 prot_data.append(tmp)
         if prot_data:
@@ -1489,6 +1507,7 @@ with tab_stats:
             fig_prot = px.bar(prot_df, x='الفئة العمرية', y='العدد',
                              color='الأداة', barmode='group',
                              title=t("chart_age_prot"), template='plotly_dark',
+                             labels={'الفئة العمرية': t('chart_label_age_group'), 'العدد': t('chart_label_count'), 'الأداة': t('chart_label_tool')},
                              color_discrete_sequence=['#7c6aff','#6bffb8','#ff6b9d'])
             fig_prot.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)')
             fig_prot = show_bar_values(fig_prot)
@@ -1499,6 +1518,7 @@ with tab_stats:
         monthly = visit_chart_df.dropna(subset=['الشهر']).groupby('الشهر').size().reset_index(name='عدد الزيارات')
         fig5 = px.line(monthly, x='الشهر', y='عدد الزيارات',
                       title=t("chart_monthly"), template='plotly_dark',
+                      labels={'الشهر': t('chart_label_month'), 'عدد الزيارات': t('chart_label_visit_count')},
                       color_discrete_sequence=['#7c6aff'], markers=True)
         fig5.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)')
         fig5 = show_line_values(fig5)
@@ -1509,9 +1529,9 @@ with tab_stats:
 #  TAB 4 — DATA SUMMARY
 # ──────────────────────────────────────
 with tab_summary:
-    _period_label = _selected_month or ((_from_month + ' إلى ' + _to_month) if _from_month and _to_month else 'كل الفترة')
+    _period_label = _selected_month or ((_from_month + f' {t("period_to")} ' + _to_month) if _from_month and _to_month else t("period_all"))
     st.markdown(f"### {_summary_tab_label}")
-    st.caption(f"ملخص الفترة: {_period_label}")
+    st.caption(f"{t('period_summary_caption')}: {_period_label}")
     st.dataframe(picture_table_df, use_container_width=True, hide_index=True, height=500)
 
     _compact_buf = io.BytesIO()
@@ -1519,9 +1539,9 @@ with tab_summary:
         summary_report_df.to_excel(_writer, index=False, sheet_name='تقرير الفترة')
         picture_table_df.to_excel(_writer, index=False, sheet_name='ملخص البيانات')
     st.download_button(
-        "⬇️ تحميل ملخص البيانات Excel",
+        t("download_summary_excel"),
         data=_compact_buf.getvalue(),
-        file_name=f"ملخص_البيانات_{_period_label}.xlsx".replace(" ", "_"),
+        file_name=f"{t('summary_filename_prefix')}_{_period_label}.xlsx".replace(" ", "_"),
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
         key="download_picture_table"
@@ -1620,7 +1640,7 @@ with tab_quality:
 
     # Run quality check button
     if st.button(t("dq_run_btn"), key="run_dq"):
-        with st.spinner("🔍 جاري الفحص..."):
+        with st.spinner(t("dq_running_spinner")):
             st.session_state["dq_issues"] = run_quality_engine(hdf)
             st.session_state["dq_notes"]  = {
                 i["row_idx"]: st.session_state["dq_notes"].get(i["row_idx"], "")
@@ -1630,7 +1650,7 @@ with tab_quality:
     issues = st.session_state.get("dq_issues")
 
     if issues is None:
-        st.markdown(f'<div class="info-box">اضغط زر الفحص لتشغيل محرك جودة البيانات على {total:,} سجل</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-box">{t("dq_run_prompt").format(n=f"{total:,}")}</div>', unsafe_allow_html=True)
     else:
         errors   = [i for i in issues if i["severity"] == "error"]
         warnings = [i for i in issues if i["severity"] == "warning"]
@@ -1672,7 +1692,7 @@ with tab_quality:
             else:
                 display_issues = issues
 
-            st.markdown(f'<div class="info-box">{t("dq_records_with_issues")}: <b style="color:#ff6b6b">{len({i["row_idx"] for i in display_issues}):,}</b> &nbsp;|&nbsp; إجمالي المشاكل: <b>{len(display_issues)}</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="info-box">{t("dq_records_with_issues")}: <b style="color:#ff6b6b">{len({i["row_idx"] for i in display_issues}):,}</b> &nbsp;|&nbsp; {t("dq_total_issues")}: <b>{len(display_issues)}</b></div>', unsafe_allow_html=True)
 
             # ── Issues Table with Notes ──
             st.markdown("---")
@@ -1683,7 +1703,7 @@ with tab_quality:
                 sev_badge = "🔴" if issue["severity"] == "error" else "🟡"
                 rows_data.append({
                     t("dq_col_row"):      issue["row_idx"] + 1,
-                    "مسلسل":              issue["serial"],
+                    t("dq_col_serial"):   issue["serial"],
                     t("dq_col_field"):    issue["field"],
                     t("dq_col_value"):    issue["value"],
                     t("dq_col_rule"):     t(issue["rule_key"]),
@@ -1699,12 +1719,12 @@ with tab_quality:
 
             under15_issues = [i for i in display_issues if i["rule_key"] == "dq_err_age_u15"]
             if under15_issues:
-                st.markdown('<div class="info-box">🔴 السجلات التالية تحتاج ملاحظة ولي الأمر:</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="info-box">{t("dq_under15_notice")}</div>', unsafe_allow_html=True)
                 for issue in under15_issues:
                     note_key = f"note_{issue['row_idx']}"
                     current_note = st.session_state["dq_notes"].get(issue["row_idx"], "")
                     new_note = st.text_input(
-                        f"سجل #{issue['row_idx']+1} — مسلسل {issue['serial']} — عمر: {issue['value']}",
+                        t("dq_record_label").format(row=issue['row_idx']+1, serial=issue['serial'], age=issue['value']),
                         value=current_note,
                         placeholder=t("dq_notes_placeholder"),
                         key=note_key
@@ -1725,11 +1745,11 @@ with tab_quality:
                         for issue in errors:
                             err_rows.append({
                                 t("dq_col_row"):      issue["row_idx"] + 1,
-                                "مسلسل":              issue["serial"],
+                                t("dq_col_serial"):   issue["serial"],
                                 t("dq_col_field"):    issue["field"],
                                 t("dq_col_value"):    issue["value"],
                                 t("dq_col_rule"):     t(issue["rule_key"]),
-                                t("dq_col_severity"): "خطأ",
+                                t("dq_col_severity"): t("dq_severity_error"),
                                 t("dq_col_notes"):    st.session_state["dq_notes"].get(issue["row_idx"], ""),
                             })
                         pd.DataFrame(err_rows).to_excel(writer, index=False, sheet_name="🔴 الأخطاء")
@@ -1740,11 +1760,11 @@ with tab_quality:
                         for issue in warnings:
                             warn_rows.append({
                                 t("dq_col_row"):      issue["row_idx"] + 1,
-                                "مسلسل":              issue["serial"],
+                                t("dq_col_serial"):   issue["serial"],
                                 t("dq_col_field"):    issue["field"],
                                 t("dq_col_value"):    issue["value"],
                                 t("dq_col_rule"):     t(issue["rule_key"]),
-                                t("dq_col_severity"): "تحذير",
+                                t("dq_col_severity"): t("dq_severity_warning"),
                                 t("dq_col_notes"):    st.session_state["dq_notes"].get(issue["row_idx"], ""),
                             })
                         pd.DataFrame(warn_rows).to_excel(writer, index=False, sheet_name="🟡 التحذيرات")
@@ -1760,7 +1780,7 @@ with tab_quality:
                     summary.to_excel(writer, index=False, sheet_name="📊 الملخص")
 
                 st.download_button(
-                    "⬇️ تحميل تقرير الجودة",
+                    t("dq_download_report"),
                     data=buf_dq.getvalue(),
                     file_name=f"DataQuality_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1772,10 +1792,10 @@ with tab_quality:
 # ──────────────────────────────────────
 with tab_indicators:
     # ── Section 1: Indicators Dashboard ──
-    st.markdown("""
+    st.markdown(f"""
     <div style="margin-bottom:1rem;">
       <div style="font-size:1.1rem;font-weight:700;color:#e0e0f0;">📈 Indicators Dashboard</div>
-      <div style="font-size:0.78rem;color:#555;">الإنجاز الفعلي للمؤشرات البرامجية</div>
+      <div style="font-size:0.78rem;color:#555;">{t('indicators_subtitle')}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1804,10 +1824,10 @@ with tab_indicators:
     st.markdown("---")
 
     # ── Section 2: Targets Management (Excel-style) ──
-    st.markdown("""
+    st.markdown(f"""
     <div style="margin-bottom:0.8rem;">
       <div style="font-size:1rem;font-weight:700;color:#e0e0f0;">🎯 Targets Management</div>
-      <div style="font-size:0.75rem;color:#555;">أدخل المستهدفات من Global Fund — Annual + Q1/Q2/Q3/Q4</div>
+      <div style="font-size:0.75rem;color:#555;">{t('targets_subtitle')}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1960,18 +1980,18 @@ with tab_indicators:
             buf = io.BytesIO(); doc.save(buf); buf.seek(0)
             return buf.getvalue()
 
-        with st.spinner("⚙️ جاري إنشاء التقارير..."):
+        with st.spinner(t("generating_reports_spinner")):
             _r_ar = _build_doc("ar"); _r_en = _build_doc("en")
         _rc1, _rc2 = st.columns(2)
         with _rc1:
-            st.download_button("⬇️ التقرير العربي (.docx)", _r_ar,
+            st.download_button(t("download_report_ar"), _r_ar,
                 f"BeF_Report_AR_{datetime.now().strftime('%Y%m')}.docx",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_r_ar")
         with _rc2:
-            st.download_button("⬇️ English Report (.docx)", _r_en,
+            st.download_button(t("download_report_en"), _r_en,
                 f"BeF_Report_EN_{datetime.now().strftime('%Y%m')}.docx",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_r_en")
-        st.success("✅ تم إنشاء التقريرين!")
+        st.success(t("reports_generated_success"))
 
 
 
@@ -2041,10 +2061,10 @@ with tab_ai:
     _api_key = _ai_cfg.get("gemini_api_key", "")
     _gemini_model = _ai_cfg.get("gemini_model", GEMINI_DEFAULT_MODEL)
 
-    st.markdown("""
+    st.markdown(f"""
     <div style="margin-bottom:1rem;">
       <div style="font-size:1.1rem;font-weight:700;color:#e0e0f0;">🤖 AI Data Assistant</div>
-      <div style="font-size:0.78rem;color:#555;">مساعد ذكي متخصص في M&E — يكتب تقارير ويحلل البيانات</div>
+      <div style="font-size:0.78rem;color:#555;">{t('ai_assistant_subtitle')}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -2162,10 +2182,10 @@ DATA QUALITY: {_qs_txt}"""
 #  TAB 9 — SETTINGS
 # ──────────────────────────────────────
 with tab_settings:
-    st.markdown("""
+    st.markdown(f"""
     <div style="margin-bottom:1.5rem;">
       <div style="font-size:1.1rem;font-weight:700;color:#e0e0f0;">⚙️ Settings</div>
-      <div style="font-size:0.78rem;color:#555;">إعدادات البرنامج — تُحفظ تلقائياً في AppData / DataBridge</div>
+      <div style="font-size:0.78rem;color:#555;">{t('settings_subtitle')}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -2175,11 +2195,11 @@ with tab_settings:
     st.markdown("### 🔑 AI Settings Manager")
     st.markdown(f"""
     <div class="info-box">
-    احصل على مفتاحك المجاني من:
+    {t('get_free_key_from')}
     <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#7c6aff;">
     Google AI Studio
     </a>
-    <br>الإعدادات تُحفظ في: <code style="color:#7c6aff;">{APPDATA_DIR2}</code>
+    <br>{t('settings_saved_in')} <code style="color:#7c6aff;">{APPDATA_DIR2}</code>
     </div>
     """, unsafe_allow_html=True)
 
@@ -2190,12 +2210,12 @@ with tab_settings:
     current_key = cfg2.get("gemini_api_key", "")
     masked = f"{'*' * (len(current_key)-4)}{current_key[-4:]}" if len(current_key) > 4 else ""
     if masked:
-        st.markdown(f'<div style="font-size:0.8rem;color:#6bff8e;margin-bottom:0.5rem;">✅ مفتاح محفوظ: <code>{masked}</code></div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:0.8rem;color:#6bff8e;margin-bottom:0.5rem;">{t("api_key_saved")}: <code>{masked}</code></div>', unsafe_allow_html=True)
 
     st.selectbox(
         "AI Provider" if st.session_state["lang"] == "en" else "مزود الذكاء الاصطناعي",
         ["gemini"], index=0, key="settings_ai_provider", disabled=True,
-        help="حالياً Gemini فقط، ويمكن إضافة OpenAI أو Local LLM لاحقاً."
+        help=t("ai_provider_help")
     )
 
     saved_model = str(cfg2.get("gemini_model", GEMINI_DEFAULT_MODEL)).strip() or GEMINI_DEFAULT_MODEL
@@ -2210,7 +2230,7 @@ with tab_settings:
         custom_model = st.text_input(
             "Custom Gemini model name" if st.session_state["lang"] == "en" else "اسم موديل Gemini مخصص",
             value=saved_model if saved_model not in model_choices else "",
-            placeholder="مثال: gemini-2.5-flash",
+            placeholder="مثال: gemini-2.5-flash" if st.session_state["lang"] == "ar" else "e.g. gemini-2.5-flash",
             key="settings_gemini_custom_model"
         )
     chosen_model = custom_model.strip() if selected_model_choice == "Custom model name" else selected_model_choice
@@ -2252,13 +2272,13 @@ with tab_settings:
                         if _used_model == chosen_model:
                             st.success(f"✅ AI Connection OK — Model: {_used_model}")
                         else:
-                            st.warning(f"⚠️ الموديل المختار غير متاح، لكن الاتصال نجح باستخدام fallback: {_used_model}")
+                            st.warning(t("fallback_model_warning").format(model=_used_model))
                     except Exception as _e:
-                        st.error("❌ Model not available. جرّب اختيار موديل آخر من الإعدادات.")
+                        st.error(t("model_not_available_error"))
                         st.caption(str(_e))
 
     st.markdown("---")
-    st.markdown("### ℹ️ معلومات البرنامج")
+    st.markdown(f"### ℹ️ {t('app_info_title')}")
     st.markdown(f"""
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
       <div class="metric-card">
@@ -2291,21 +2311,21 @@ with tab_settings:
 #  TAB 10 — SOURCE CONVERTER
 # ──────────────────────────────────────
 with tab_converter:
-    st.markdown("""
+    st.markdown(f"""
     <div style="margin-bottom:1.5rem;">
       <div style="font-size:1.1rem;font-weight:700;color:#e0e0f0;">🔄 Source Converter</div>
-      <div style="font-size:0.78rem;color:#555;">تحويل الشيت الأساسي (204 عمود) إلى شيت البرنامج (27 عمود) تلقائياً</div>
+      <div style="font-size:0.78rem;color:#555;">{t('converter_tab_subtitle')}</div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("""
+    st.markdown(f"""
     <div class="info-box">
-    ارفع الشيت الأساسي (المكوّن من 204 عمود) وسيتحول تلقائياً إلى هيكل شيت البرنامج جاهزاً للتحليل.
+    {t('converter_tab_hint')}
     </div>
     """, unsafe_allow_html=True)
 
     _src_file = st.file_uploader(
-        "ارفع الشيت الأساسي (Excel)",
+        t("upload_source_sheet_excel"),
         type=["xlsx"], key="src_converter_upload"
     )
 
@@ -2316,10 +2336,10 @@ with tab_converter:
 
             # Preview source
             _df_prev = pd.read_excel(io.BytesIO(_src_bytes), header=None, nrows=2)
-            st.markdown(f'<div class="info-box">📄 الملف: <b>{_src_file.name}</b> — {len(_df_prev.columns)} عمود</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="info-box">📄 {t("file_label")}: <b>{_src_file.name}</b> — {len(_df_prev.columns)} {t("columns_label")}</div>', unsafe_allow_html=True)
 
-            if st.button("🔄 تحويل الآن", key="run_convert", use_container_width=False):
-                with st.spinner("⚙️ جاري التحويل..."):
+            if st.button(t("convert_now_btn"), key="run_convert", use_container_width=False):
+                with st.spinner(t("converting_spinner")):
 
                     import warnings as _w
                     _w.filterwarnings("ignore")
@@ -2389,27 +2409,27 @@ with tab_converter:
                     _buf_out.seek(0)
                     _result_bytes = _buf_out.getvalue()
 
-                st.success(f"✅ تم التحويل والتنظيف! {len(_out):,} سجل — {len(_out.columns)} عمود")
+                st.success(f"✅ {t('convert_clean_success')} {len(_out):,} {t('convert_clean_records')} — {len(_out.columns)} {t('columns_label')}")
 
-                _conv_map_df = mapping_report_to_dataframe(_conv_report)
+                _conv_map_df = mapping_report_to_dataframe(_conv_report, st.session_state["lang"])
                 if not _conv_map_df.empty:
-                    st.markdown("**Auto Mapper للملف المحوّل — راجع الربط قبل الاعتماد**")
+                    st.markdown(f"**{t('converter_auto_mapper_title')}**")
                     st.dataframe(_conv_map_df, use_container_width=True, height=220)
 
-                if st.button("✅ استخدام الملف المحوّل في التحليل وفتح شاشة الاعتماد", key="use_converted_for_analysis"):
+                if st.button(t("use_converted_btn"), key="use_converted_for_analysis"):
                     st.session_state["hdf"] = _out
                     st.session_state["data_clean_report"] = _conv_report
                     st.session_state["standard_df"] = _conv_standard
                     st.session_state["mapper_approved"] = False
                     st.session_state["dq_issues"] = None
-                    st.session_state["hiv_file_name"] = f"[محوّل] {_src_file.name}"
+                    st.session_state["hiv_file_name"] = f"{t('converted_prefix')} {_src_file.name}"
                     st.rerun()
 
                 # Preview
                 st.dataframe(_out.head(10), use_container_width=True, height=280)
 
                 st.download_button(
-                    "⬇️ تحميل الشيت المحوّل",
+                    t("download_converted_sheet"),
                     data=_result_bytes,
                     file_name=f"IDUs_Converted_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2417,18 +2437,18 @@ with tab_converter:
                 )
 
         except Exception as _ce:
-            st.error(f"❌ خطأ في التحويل: {_ce}")
+            st.error(f"❌ {t('convert_error')}: {_ce}")
 
 
 # ──────────────────────────────────────
 #  TAB 2 — DATA REPAIR CENTER (shown as second tab)
 # ──────────────────────────────────────
 with tab_repair:
-    repaired_df = render_data_repair_center(st.session_state["hdf"])
+    repaired_df = render_data_repair_center(st.session_state["hdf"], st.session_state["lang"])
     if repaired_df is not None:
         st.session_state["hdf"] = repaired_df
         st.session_state["standard_df"] = generate_standard_df(repaired_df)
         st.session_state["dq_issues"] = None
         st.session_state["mapper_approved"] = True
-        st.info("تم تحديث البيانات داخل الجلسة. سيتم إعادة تحميل التحليل الآن.")
+        st.info(t("data_updated_info"))
         st.rerun()
