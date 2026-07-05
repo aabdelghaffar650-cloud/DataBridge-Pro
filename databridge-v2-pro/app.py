@@ -647,6 +647,25 @@ if "تحويل" in _upload_mode or "Convert" in _upload_mode:
 # ── Direct Upload Mode ──
 else:
     hiv_file = st.file_uploader(t("upload_label"), type=["xlsx"], key="hiv_upload")
+
+    # ── Load Sample Data button ──
+    _sample_col1, _sample_col2 = st.columns([3, 1])
+    with _sample_col2:
+        if st.button("📂 Load Sample Data" if st.session_state["lang"] != "ar" else "📂 تحميل بيانات تجريبية", key="load_sample_data"):
+            try:
+                with open("sample_data/Demo_IDUs_Data.xlsx", "rb") as _sf:
+                    _sample_bytes = _sf.read()
+                hdf_new, _clean_report = smart_read_excel(io.BytesIO(_sample_bytes))
+                st.session_state["hdf"] = hdf_new
+                st.session_state["data_clean_report"] = _clean_report
+                st.session_state["standard_df"] = generate_standard_df(hdf_new)
+                st.session_state["mapper_approved"] = False
+                st.session_state["dq_issues"] = None
+                st.session_state["hiv_file_name"] = "Sample Demo Dataset"
+                st.rerun()
+            except Exception as _se:
+                st.error(f"Could not load sample data: {_se}")
+
     if hiv_file is not None and hiv_file.file_id != st.session_state.get("_hiv_file_id"):
         try:
             validate_uploaded_file(hiv_file)
