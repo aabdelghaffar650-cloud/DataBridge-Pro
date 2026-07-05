@@ -653,7 +653,9 @@ else:
     with _sample_col2:
         if st.button("📂 Load Sample Data" if st.session_state["lang"] != "ar" else "📂 تحميل بيانات تجريبية", key="load_sample_data"):
             try:
-                with open("sample_data/Demo_IDUs_Data.xlsx", "rb") as _sf:
+                import os
+                sample_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample_data", "Demo_IDUs_Data.xlsx")
+                with open(sample_path, "rb") as _sf:
                     _sample_bytes = _sf.read()
                 hdf_new, _clean_report = smart_read_excel(io.BytesIO(_sample_bytes))
                 st.session_state["hdf"] = hdf_new
@@ -1930,13 +1932,17 @@ with tab_indicators:
     st.markdown("---")
     st.markdown("### 📄 Donor Report")
     if st.button("📋 Generate Monthly Report", key="gen_report", use_container_width=False):
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        from docx import Document
-        from docx.shared import Inches, Pt, RGBColor
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-        import tempfile
+        try:
+            import matplotlib as mpl
+            mpl.use('Agg')
+            import matplotlib.pyplot as plt
+            from docx import Document
+            from docx.shared import Inches, Pt, RGBColor
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            import tempfile
+        except Exception as e:
+            st.error("Required libraries for report generation are not available: %s" % e)
+            st.stop()
 
         def _make_bar(labels, values, title, color="#7c6aff"):
             fig, ax = plt.subplots(figsize=(6,3.5), facecolor="white")
