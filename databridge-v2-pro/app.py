@@ -36,7 +36,7 @@ USERS_FILE         = "users.json"
 # ────────────────────────────────────────────────────────────────
 from modules.settings import T, APP_VERSION, load_config, save_config, get_appdata_dir
 from modules.utils import safe_html, validate_uploaded_file, safe_read_excel, SmartHistoryManager, secure_multi_condition_filter
-from modules.auth import render_login, change_password
+from modules.auth import render_login, change_password, change_username
 from modules.quality_engine import run_quality_engine, compute_quality_score
 from modules.source_converter import format_idus_source_date
 from modules.data_cleaner import smart_read_excel, clean_dataframe, report_to_dataframe, mapping_report_to_dataframe, generate_standard_df, get_mapping_summary, save_mapping_memory_from_report
@@ -236,6 +236,8 @@ if "targets" not in st.session_state:
     }
 if "show_change_pw" not in st.session_state:
     st.session_state["show_change_pw"] = False
+if "show_change_username" not in st.session_state:
+    st.session_state["show_change_username"] = False
 if "data_clean_report" not in st.session_state:
     st.session_state["data_clean_report"] = None
 if "standard_df" not in st.session_state:
@@ -375,6 +377,27 @@ with st.sidebar:
                         st.session_state["show_change_pw"] = False
                     else:
                         st.error(t(msg_key))
+
+    if st.button(t("change_username_btn"), use_container_width=True, key="toggle_username"):
+        st.session_state["show_change_username"] = not st.session_state["show_change_username"]
+
+    if st.session_state["show_change_username"]:
+        with st.form("change_username_form"):
+            uname_pw     = st.text_input(t("current_password_for_username"), type="password", key="uname_pw")
+            new_username = st.text_input(t("new_username"), key="new_username_input")
+            submitted_u  = st.form_submit_button(t("save_btn"), use_container_width=True)
+            if submitted_u:
+                ok, msg_key = change_username(
+                    st.session_state.get("current_user", "admin"),
+                    uname_pw, new_username
+                )
+                if ok:
+                    st.success(t(msg_key))
+                    st.session_state["current_user"] = new_username.strip()
+                    st.session_state["show_change_username"] = False
+                    st.rerun()
+                else:
+                    st.error(t(msg_key))
 
     st.markdown("---")
     if st.button(f"🚪 {t('logout')}", use_container_width=True, key="logout_btn"):
@@ -804,7 +827,10 @@ if date_col_main:
                 _selected_month = _sel_month
                 hdf = hdf[hdf[date_col_main].dt.to_period('M').astype(str) == _sel_month].copy()
             elif ("نطاق" in _month_mode or "Range" in _month_mode):
-                _from_m = st.selectbox("من:" if st.session_state["lang"] == "ar" else "From:", _available_months, key="from_month")
+                _april_candidates = [i for i, m in enumerate(_available_months) if m.endswith("-04")]
+                _default_from_idx = _april_candidates[0] if _april_candidates else 0
+                _from_m = st.selectbox("من:" if st.session_state["lang"] == "ar" else "From:", _available_months,
+                                        index=_default_from_idx, key="from_month")
                 _to_m   = st.selectbox("إلى:" if st.session_state["lang"] == "ar" else "To:", _available_months,
                                         index=len(_available_months)-1, key="to_month")
                 _month_filter_kind = "range"
@@ -1199,6 +1225,7 @@ def build_monthly_summary_tables(base_df: pd.DataFrame, full_df: pd.DataFrame, v
         [base_visits_total + total_fu_visits, t('tbl_count')],
         [base_visits_total, t('tbl_reach')],
         [male_count, t('tbl_men')],
+        [female_count, ("نساء" if st.session_state["lang"] == "ar" else "Women")],
         [total_fu_visits, t('tbl_followup')],
         [base_syr, t('tbl_syringes')],
         [fu_syr, t('tbl_followup_syringes')],
@@ -1490,7 +1517,15 @@ with tab_stats:
     if area_col:
         ch5, ch6 = st.columns(2)
         with ch5:
-            area_counts = visit_chart_df['المنطقة'].dropna().value_counts().reset_index()
+            _group_area_fw = st.checkbox(
+                "تجميع حسب أول كلمة فقط" if st.session_state["lang"] == "ar" else "Group by first word only",
+                key="group_area_fw"
+            )
+            if _group_area_fw:
+                _area_series = visit_chart_df['المنطقة'].dropna().astype(str).str.strip().str.split().str[0]
+            else:
+                _area_series = visit_chart_df['المنطقة'].dropna()
+            area_counts = _area_series.value_counts().reset_index()
             area_counts.columns = ['المنطقة', 'العدد']
             fig_area = px.bar(area_counts, x='المنطقة', y='العدد',
                              title=t("chart_area"), template='plotly_dark',
@@ -1545,6 +1580,113 @@ with tab_stats:
         fig5.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)')
         fig5 = show_line_values(fig5)
         st.plotly_chart(fig5, use_container_width=True)
+
+    # ── Export Statistics to PDF ──
+    st.markdown("---")
+    if st.button("📄 Generate PDF Report", key="gen_stats_pdf", use_container_width=False):
+        try:
+            import matplotlib as mpl
+            mpl.use('Agg')
+            import matplotlib.pyplot as plt
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib.units import inch
+            from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Paragraph, Spacer, PageBreak
+            from reportlab.lib.styles import getSampleStyleSheet
+            import tempfile, io
+        except Exception as e:
+            st.error("Required libraries for PDF export are not available: %s" % e)
+            st.stop()
+
+        def _mpl_bar(labels, values, title, color="#7c6aff"):
+            fig_m, ax = plt.subplots(figsize=(7, 4), facecolor="white")
+            ax.bar([str(l) for l in labels], values, color=color, edgecolor="white")
+            ax.set_title(title, fontsize=13, fontweight="bold")
+            ax.set_facecolor("#f8f8f8")
+            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+            _mx = max(values) if len(values) else 0
+            for b, v in zip(ax.patches, values):
+                ax.text(b.get_x()+b.get_width()/2, b.get_height()+_mx*0.01,
+                        str(v), ha="center", fontsize=9, fontweight="bold")
+            plt.xticks(rotation=30, ha='right')
+            plt.tight_layout()
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            plt.savefig(tmp.name, dpi=150, bbox_inches="tight"); plt.close(fig_m)
+            return tmp.name
+
+        def _mpl_pie(labels, values, title):
+            fig_m, ax = plt.subplots(figsize=(7, 4), facecolor="white")
+            _colors = ['#7c6aff','#ff6b6b','#6bffb8','#ffb74d','#6bb3ff','#ff6b9d']
+            ax.pie(values, labels=[str(l) for l in labels], autopct='%1.1f%%',
+                   colors=_colors[:len(values)])
+            ax.set_title(title, fontsize=13, fontweight="bold")
+            plt.tight_layout()
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            plt.savefig(tmp.name, dpi=150, bbox_inches="tight"); plt.close(fig_m)
+            return tmp.name
+
+        def _mpl_line(x, y, title):
+            fig_m, ax = plt.subplots(figsize=(7, 4), facecolor="white")
+            _x = [str(v) for v in x]
+            ax.plot(_x, y, marker='o', color="#7c6aff")
+            ax.set_title(title, fontsize=13, fontweight="bold")
+            ax.set_facecolor("#f8f8f8")
+            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+            for xi, yi in zip(_x, y):
+                ax.annotate(str(yi), (xi, yi), textcoords="offset points", xytext=(0, 6), ha='center', fontsize=8)
+            plt.xticks(rotation=30, ha='right')
+            plt.tight_layout()
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            plt.savefig(tmp.name, dpi=150, bbox_inches="tight"); plt.close(fig_m)
+            return tmp.name
+
+        _chart_imgs = []
+        if 'test_counts' in locals() and not test_counts.empty:
+            _chart_imgs.append((t("chart_test"), _mpl_pie(test_counts['النتيجة'], test_counts['العدد'], t("chart_test"))))
+        if 'fu_df' in locals() and not fu_df.empty:
+            _chart_imgs.append((_fu_title, _mpl_bar(fu_df['الحالة'], fu_df['العدد'], _fu_title)))
+        if 'svc_df' in locals() and not svc_df.empty:
+            _chart_imgs.append((t("chart_services"), _mpl_bar(svc_df['الخدمة'], svc_df['العدد'], t("chart_services"))))
+        if 'age_counts' in locals() and not age_counts.empty:
+            _chart_imgs.append((t("chart_age"), _mpl_bar(age_counts['الفئة العمرية'], age_counts['العدد'], t("chart_age"), color="#6bffb8")))
+        if 'area_counts' in locals() and not area_counts.empty:
+            _chart_imgs.append((t("chart_area"), _mpl_bar(area_counts['المنطقة'], area_counts['العدد'], t("chart_area"), color="#ff6b9d")))
+        if 'gov_counts' in locals() and not gov_counts.empty:
+            _chart_imgs.append((t("chart_gov"), _mpl_pie(gov_counts['المحافظة'], gov_counts['العدد'], t("chart_gov"))))
+        if 'prot_df' in locals() and not prot_df.empty:
+            _summed = prot_df.groupby('الأداة')['العدد'].sum().reset_index()
+            _prot_total_title = "أدوات وقائية — الإجمالي" if st.session_state["lang"] == "ar" else "Protective Tools — Totals"
+            _chart_imgs.append((_prot_total_title, _mpl_bar(_summed['الأداة'], _summed['العدد'], _prot_total_title)))
+        if 'monthly' in locals() and not monthly.empty:
+            _chart_imgs.append((t("chart_monthly"), _mpl_line(monthly['الشهر'], monthly['عدد الزيارات'], t("chart_monthly"))))
+
+        _buf_pdf = io.BytesIO()
+        _pdf_doc = SimpleDocTemplate(_buf_pdf, pagesize=letter,
+                                      topMargin=0.6*inch, bottomMargin=0.6*inch,
+                                      leftMargin=0.7*inch, rightMargin=0.7*inch)
+        _styles = getSampleStyleSheet()
+        _story = [
+            Paragraph("DataBridge — Statistics Report", _styles['Title']),
+            Paragraph(datetime.now().strftime("%B %Y"), _styles['Normal']),
+            Spacer(1, 16),
+        ]
+        for _i, (_ctitle, _cpath) in enumerate(_chart_imgs):
+            _story.append(Paragraph(_ctitle, _styles['Heading2']))
+            _story.append(RLImage(_cpath, width=6.2*inch, height=3.5*inch))
+            _story.append(Spacer(1, 14))
+            if (_i + 1) % 2 == 0 and _i != len(_chart_imgs) - 1:
+                _story.append(PageBreak())
+
+        if _chart_imgs:
+            _pdf_doc.build(_story)
+            st.download_button(
+                "⬇️ Download Statistics PDF",
+                data=_buf_pdf.getvalue(),
+                file_name=f"Statistics_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+                key="dl_stats_pdf"
+            )
+        else:
+            st.warning("No charts available to export for the current data/filter.")
 
 
 # ──────────────────────────────────────
@@ -1828,7 +1970,7 @@ with tab_indicators:
 
     _ind_cols = st.columns(5)
     for _i, (_name, _val, _rate, _clr) in enumerate([
-        ("HIV Tests",     total,            None,            "#7c6aff"),
+        ("HIV Tests",     base_visits_total - refused_test, None,            "#7c6aff"),
         ("Positive",      positive,         positivity_rate, "#ff6b6b"),
         ("Referrals",     referrals,        referral_rate,   "#6bff8e"),
         ("Follow-up Visits", total_fu_visits, followup_rate, "#6bb3ff"),
@@ -1856,10 +1998,11 @@ with tab_indicators:
     if "kpi_targets" not in st.session_state:
         st.session_state["kpi_targets"] = {
             k: {"annual": 0, "Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0}
-            for k in ["hiv_tests","positive","referrals","followups","refusal"]
+            for k in ["reached","hiv_tests","positive","referrals","followups","refusal"]
         }
 
     _kpi_labels_t6 = {
+        "reached":    "Reached",
         "hiv_tests":  "HIV Tests",
         "positive":   "Positive Cases",
         "referrals":  "Referrals",
@@ -1867,7 +2010,8 @@ with tab_indicators:
         "refusal":    "Refused",
     }
     _actuals_t6 = {
-        "hiv_tests":  total,
+        "reached":    base_visits_total,
+        "hiv_tests":  base_visits_total - refused_test,  # actual tests performed = reached minus refused (blank result); Global Fund indicator excludes follow-ups
         "positive":   positive,
         "referrals":  referrals,
         "followups":  total_fu_visits,
@@ -1983,11 +2127,12 @@ with tab_indicators:
             h2.runs[0].font.color.rgb = RGBColor(0x7c,0x6a,0xff)
             tbl = doc.add_table(rows=1+len(_kpi_labels_t6), cols=4)
             tbl.style = "Table Grid"
-            for ci, ch in enumerate(["Indicator","Actual","Annual Target","Achievement"]):
+            _target_col_label = f"{_sel_q_t6} Target"
+            for ci, ch in enumerate(["Indicator","Actual",_target_col_label,"Achievement"]):
                 tbl.rows[0].cells[ci].text = ch
                 tbl.rows[0].cells[ci].paragraphs[0].runs[0].bold = True
             for ri, (kk, kname) in enumerate(_kpi_labels_t6.items(), 1):
-                act = _actuals_t6[kk]; ann = st.session_state["kpi_targets"][kk]["annual"]
+                act = _actuals_t6[kk]; ann = st.session_state["kpi_targets"][kk][_q_key]
                 pct = f"{round(act/ann*100,1)}%" if ann>0 else "N/A"
                 for ci, val in enumerate([kname, str(act), str(ann), pct]):
                     tbl.rows[ri].cells[ci].text = val

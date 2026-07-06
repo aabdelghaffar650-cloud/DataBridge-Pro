@@ -166,6 +166,15 @@ T = {
         "pw_new_too_short": "❌ كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل",
         "pw_new_same_as_old": "❌ كلمة المرور الجديدة يجب أن تختلف عن القديمة",
         "pw_changed_success": "✅ تم تغيير كلمة المرور بنجاح",
+        # Username change
+        "change_username_btn": "👤 تغيير اسم المستخدم",
+        "current_password_for_username": "كلمة المرور الحالية",
+        "new_username": "اسم المستخدم الجديد",
+        "username_pw_wrong": "❌ كلمة المرور غير صحيحة",
+        "username_empty": "❌ اسم المستخدم الجديد لا يمكن أن يكون فارغاً",
+        "username_same_as_old": "❌ اسم المستخدم الجديد يجب أن يختلف عن الحالي",
+        "username_taken": "❌ اسم المستخدم ده مستخدم بالفعل",
+        "username_changed_success": "✅ تم تغيير اسم المستخدم بنجاح",
         # Source auto-converter (upload + 204-col converter)
         "err_not_204_sheet": "هذا الملف لا يبدو الشيت الأساسي 204 عمود.",
         "err_no_visit_date_or_code": "لم يتم العثور على تاريخ الزيارة أو الكود المجمع داخل الشيت الأساسي.",
@@ -452,6 +461,15 @@ T = {
         "pw_new_too_short": "❌ New password must be at least 8 characters",
         "pw_new_same_as_old": "❌ New password must be different from the old one",
         "pw_changed_success": "✅ Password changed successfully",
+        # Username change
+        "change_username_btn": "👤 Change Username",
+        "current_password_for_username": "Current Password",
+        "new_username": "New Username",
+        "username_pw_wrong": "❌ Password is incorrect",
+        "username_empty": "❌ New username cannot be empty",
+        "username_same_as_old": "❌ New username must be different from the current one",
+        "username_taken": "❌ That username is already taken",
+        "username_changed_success": "✅ Username changed successfully",
         # Source auto-converter (upload + 204-col converter)
         "err_not_204_sheet": "This file does not appear to be the 204-column source sheet.",
         "err_no_visit_date_or_code": "Visit date or composite code not found in the source sheet.",

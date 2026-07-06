@@ -470,6 +470,35 @@ def detect_column_mapping(columns: Iterable[Any], memory: Optional[Dict[str, str
             # Avoid mapping confirmatory/rapid-specific columns to the generic base result when a better specific field exists.
             if canonical == "نتيجة التحليل" and any(x in norm_col for x in ["تاكيدي", "تأكيدي", "confirm"]):
                 score = min(score, 45)
+
+            # Service quantity fields (واقيات/مزلقات/سرنجات) must map to the actual
+            # "quantity distributed" column, never the "do they need it" question.
+            # Both contain the same keyword and previously tied on score, with the
+            # need-column winning purely by column order — a real bug that silently
+            # used demand instead of delivery in every downstream chart/report.
+            is_need_col       = any(x in norm_col for x in ["هل تحتاج", "تحتاج الي", "تحتاج الى", "need", "needs", "required"])
+            is_qty_phrasing   = any(x in norm_col for x in ["عدد ما تم توزيعه", "اجمالي عدد", "توزيعه", "المقدمه"])
+            is_provided_yesno = any(x in norm_col for x in ["هل تم تقديم", "تم تقديم"])
+            if canonical in NUMERIC_KEYWORDS:
+                if score > 0 and is_qty_phrasing:
+                    score = max(score, 96); method = "rule"
+                elif is_need_col:
+                    score = min(score, 40)
+                elif is_provided_yesno:
+                    score = min(score, 60)  # boolean yes/no, not the quantity field the app needs
+            elif canonical in YES_NO_KEYWORDS:
+                if is_need_col:
+                    score = min(score, 40)
+
+            # Prefer an exact/near-exact match to the canonical field name itself
+            # over a partial keyword overlap from an unrelated column (fixes cases
+            # like "الإحالة لخدمات اخري" beating the real "الاحالة علي العلاج" column).
+            canon_norm = _norm_text(canonical)
+            if norm_col == canon_norm:
+                score, method = 100, "exact"
+            elif canon_norm in norm_col:
+                score = max(score, min(97, 80 + min(len(canon_norm), 17)))
+
             if score >= 70:
                 candidates.append((score, col_str, canonical, method))
 

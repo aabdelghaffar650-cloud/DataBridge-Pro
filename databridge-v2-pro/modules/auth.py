@@ -78,6 +78,23 @@ def change_password(username: str, old_pw: str, new_pw: str) -> Tuple[bool, str]
     save_users(users)
     return True, "pw_changed_success"
 
+def change_username(old_username: str, password: str, new_username: str) -> Tuple[bool, str]:
+    """Renames a user's login, keeping the same password hash. Returns (success, message_key)."""
+    old_username = (old_username or "").strip()
+    new_username = (new_username or "").strip()
+    if not check_login(old_username, password):
+        return False, "username_pw_wrong"
+    if not new_username:
+        return False, "username_empty"
+    if new_username == old_username:
+        return False, "username_same_as_old"
+    users = load_users()
+    if new_username in users:
+        return False, "username_taken"
+    users[new_username] = users.pop(old_username)
+    save_users(users)
+    return True, "username_changed_success"
+
 def render_login(lang: str) -> bool:
     t = T[lang]
     st.markdown(f"""
