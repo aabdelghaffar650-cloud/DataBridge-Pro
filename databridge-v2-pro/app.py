@@ -2181,6 +2181,15 @@ def _get_ai_config() -> dict:
     cfg.setdefault("ai_provider", "gemini")
     cfg.setdefault("gemini_model", GEMINI_DEFAULT_MODEL)
     cfg.setdefault("gemini_api_key", "")
+    # Prefer Streamlit Cloud Secrets / environment variable over the local
+    # config file — the local file lives in an ephemeral folder on Cloud and
+    # gets wiped on every redeploy, so Secrets must win when present.
+    if not cfg.get("gemini_api_key"):
+        try:
+            secret_key = st.secrets.get("GEMINI_API_KEY", "")
+        except Exception:
+            secret_key = ""
+        cfg["gemini_api_key"] = secret_key or os.environ.get("GEMINI_API_KEY", "")
     return cfg
 
 
