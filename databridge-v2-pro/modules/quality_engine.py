@@ -12,6 +12,14 @@ VALID_AGE_GROUPS = [
 ]
 AGE_UNDER_15 = ['أقل من 15', 'less than 15', '< 15', 'اقل من 15']
 
+# DataBridge Pro outlier thresholds agreed with Befrienders M&E team.
+# A value is flagged only when it is strictly greater than the limit.
+OUTLIER_LIMITS = {
+    'سرنجات': 200,
+    'واقيات': 144,
+    'مزلقات': 100,
+}
+
 # Governorate abbreviation map (first Arabic letter)
 GOV_MAP = {
     'ز': 'الجيزة', 'ق': 'القاهرة', 'ا': 'الاسكندرية',
@@ -76,6 +84,21 @@ def run_quality_engine(hdf: pd.DataFrame) -> List[Dict]:
     col_condoms  = find_col('واقيات', ['متابعه'])
     col_lube     = find_col('مزلقات', ['متابعه'])
     col_syringes = find_col('سرنجات', ['متابعه'])
+
+    def _norm_col_name(value: Any) -> str:
+        return str(value).replace('ة', 'ه').replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').strip()
+
+    def _quantity_limit_for_col(col_name: str) -> Optional[int]:
+        nc = _norm_col_name(col_name)
+        if 'سرنج' in nc:
+            return OUTLIER_LIMITS['سرنجات']
+        if 'واقي' in nc:
+            return OUTLIER_LIMITS['واقيات']
+        if 'مزلق' in nc:
+            return OUTLIER_LIMITS['مزلقات']
+        return None
+
+    quantity_cols = [c for c in hdf.columns if _quantity_limit_for_col(str(c)) is not None]
 
     # ── Track duplicates ──
     serial_counts = hdf[col_serial].value_counts() if col_serial else pd.Series(dtype=int)
@@ -175,13 +198,19 @@ def run_quality_engine(hdf: pd.DataFrame) -> List[Dict]:
             if has_fu_data and pd.isna(fu_date_val):
                 add_issue(col_fu_date, 'فراغ', 'dq_err_followup_nodate')
 
-        # ── Rule 8: Negative quantities ──
-        for qty_col in [col_condoms, col_lube, col_syringes]:
-            if qty_col and pd.notna(row[qty_col]):
+        # ── Rule 8: Quantity validation ──
+        # Negative values are always invalid. Outliers are flagged only when the
+        # value is strictly greater than the agreed threshold:
+        # syringes > 200, condoms > 144, lubricants > 100.
+        for qty_col in quantity_cols:
+            if qty_col and pd.notna(row.get(qty_col)):
                 try:
-                    val_num = float(row[qty_col])
+                    val_num = float(str(row[qty_col]).replace(',', ''))
                     if val_num < 0:
                         add_issue(qty_col, val_num, 'dq_err_negative_qty')
+                    limit = _quantity_limit_for_col(qty_col)
+                    if limit is not None and val_num > limit:
+                        add_issue(qty_col, val_num, 'dq_warn_quantity_outlier', severity='warning')
                 except (ValueError, TypeError):
                     pass
 
@@ -208,6 +237,7 @@ def compute_quality_score(issues: list, total_records: int) -> dict:
         'dq_err_duplicate_serial':      ('info',     0),
         'dq_err_invalid_code_format':   ('info',     0),
         'dq_err_negative_qty':          ('info',     0),
+        'dq_warn_quantity_outlier':     ('minor',    0.5),
     }
     critical = major = minor = info = 0
     penalty = 0.0

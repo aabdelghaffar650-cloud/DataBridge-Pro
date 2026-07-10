@@ -1,9 +1,94 @@
-__pycache__/
-*.pyc
-users.json
+# =========================
+# Secrets / Local users
+# =========================
 .env
+.env.*
 .streamlit/secrets.toml
-*.xlsx
-*.xls
-*.csv
+users.json
+*.log
+
+# =========================
+# Python environments
+# =========================
 .venv/
+venv/
+*/.venv/
+*/venv/
+
+# =========================
+# Python cache
+# =========================
+__pycache__/
+*/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# =========================
+# Data files / uploaded datasets
+# =========================
+*.csv
+*.xls
+*.xlsx
+*.xlsm
+
+# But keep official templates if needed
+!databridge-v2-pro/templates/*.xlsx
+!databridge-v2-pro/templates/*.docx
+!databridge-v2-pro/templates/*.pdf
+
+# =========================
+# PyInstaller
+# =========================
+databridge-v2-pro/build/
+databridge-v2-pro/dist/
+build/
+dist/
+*.spec.bak
+
+# =========================
+# Tauri / Rust build outputs
+# =========================
+databridge-v2-pro/databridge-desktop/src-tauri/target/
+databridge-v2-pro/databridge-desktop/src-tauri/binaries/*.exe
+databridge-v2-pro/databridge-desktop/src-tauri/binaries/*.dll
+
+# =========================
+# Node / frontend
+# =========================
+node_modules/
+*/node_modules/
+databridge-v2-pro/databridge-desktop/node_modules/
+databridge-v2-pro/databridge-desktop/dist/
+databridge-v2-pro/databridge-desktop/.vite/
+
+# =========================
+# Installers / generated binaries
+# =========================
+*.exe
+*.msi
+*.dmg
+*.app
+*setup.exe
+*_setup.exe
+
+# =========================
+# Backups / archives
+# =========================
+*.zip
+*.rar
+*.7z
+Backups/
+backup/
+*_backup/
+*_Backup/
+
+# =========================
+# OS / editor junk
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

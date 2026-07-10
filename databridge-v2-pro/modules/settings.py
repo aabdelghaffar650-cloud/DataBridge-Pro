@@ -1,19 +1,26 @@
 """Translations and app settings."""
 
+import os
+
 APP_VERSION = "v2.3.6 Pro — AI Settings Manager"
 MAX_HISTORY = 10
 MAX_UPLOAD_SIZE_MB = 100
 MAX_HISTORY_MEM_MB = 500
-USERS_FILE = "users.json"
 
 
 def get_appdata_dir() -> str:
     """Writable per-user directory for DataBridge runtime files."""
-    import os
     base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".databridge")
     path = os.path.join(base, "DataBridge") if os.environ.get("APPDATA") else base
     os.makedirs(path, exist_ok=True)
     return path
+
+
+# Persistent, absolute path -- survives PyInstaller/Tauri packaging and app
+# restarts. Previously this was just "users.json" (relative to whatever
+# folder the process happened to start in), so a frozen exe would create a
+# brand-new empty users file instead of finding the real one.
+USERS_FILE = os.path.join(get_appdata_dir(), "users.json")
 
 
 def get_config_path() -> str:
@@ -142,6 +149,7 @@ T = {
         "dq_err_positive_referral": "نتيجة إيجابية بدون إحالة للعلاج",
         "dq_err_followup_nodate": "توجد بيانات متابعة بدون تاريخ متابعة",
         "dq_err_negative_qty": "كمية سالبة غير مقبولة",
+        "dq_warn_quantity_outlier": "قيمة كمية أعلى من الحد المتفق عليه للمراجعة",
         "dq_err_duplicate_serial": "رقم مسلسل مكرر",
         "dq_err_duplicate_code": "كود مجمع مكرر",
         "dq_err_code_mismatch": "الكود المجمع لا يطابق بيانات تاريخ الميلاد أو المحافظة",
@@ -437,6 +445,7 @@ T = {
         "dq_err_positive_referral": "Positive result without treatment referral",
         "dq_err_followup_nodate": "Follow-up data exists but no follow-up date",
         "dq_err_negative_qty": "Negative quantity not acceptable",
+        "dq_warn_quantity_outlier": "Quantity exceeds agreed review threshold",
         "dq_err_duplicate_serial": "Duplicate serial number",
         "dq_err_duplicate_code": "Duplicate composite code",
         "dq_err_code_mismatch": "Composite code does not match birth date or governorate data",

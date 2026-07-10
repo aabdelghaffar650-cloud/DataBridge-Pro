@@ -41,6 +41,7 @@ from modules.quality_engine import run_quality_engine, compute_quality_score
 from modules.source_converter import format_idus_source_date
 from modules.data_cleaner import smart_read_excel, clean_dataframe, report_to_dataframe, mapping_report_to_dataframe, generate_standard_df, get_mapping_summary, save_mapping_memory_from_report
 from modules.data_repair_center import render_data_repair_center
+from modules.reports import build_report_context, build_summary_display_df, build_summary_excel_bytes, build_donor_package, unify_area_name
 
 # ────────────────────────────────────────────────────────────────
 # TRANSLATIONS
@@ -413,15 +414,73 @@ with st.sidebar:
 # ════════════════════════════════════════
 #  IDUs SOURCE AUTO-CONVERTER HELPERS
 # ════════════════════════════════════════
+def _detect_idus_source_data_start(raw_df: pd.DataFrame) -> int:
+    """Detect the first real beneficiary row in the 204/205-column source file.
+
+    Some source exports start data after 4 header rows, while the current
+    Befrienders source starts at Excel row 4 (zero-based index 3).  Hard-coding
+    skiprows=4 drops serial 1 and makes Jan-Jun reach 904 instead of 905.
+    """
+    if raw_df is None or raw_df.empty:
+        return 0
+
+    max_scan = min(len(raw_df), 40)
+    for idx in range(max_scan):
+        serial = raw_df.iat[idx, 0] if raw_df.shape[1] > 0 else None
+        visit_date = raw_df.iat[idx, 2] if raw_df.shape[1] > 2 else None
+
+        try:
+            serial_ok = pd.notna(serial) and str(serial).strip() != "" and float(serial) >= 1
+        except Exception:
+            serial_ok = False
+
+        try:
+            date_ok = pd.to_datetime(pd.Series([visit_date]), errors="coerce", dayfirst=True).notna().iloc[0]
+        except Exception:
+            date_ok = False
+
+        if serial_ok and date_ok:
+            return idx
+
+    # Backward-compatible fallback for older source files.
+    return 4
+
+
+def _read_idus_204_source_raw(file_bytes: bytes) -> pd.DataFrame:
+    """Read the IDUs source workbook without dropping the first data row."""
+    raw_df = pd.read_excel(io.BytesIO(file_bytes), header=None)
+    raw_df.columns = range(len(raw_df.columns))
+
+    if raw_df.shape[1] < 180:
+        raise ValueError(t("err_not_204_sheet"))
+
+    data_start = _detect_idus_source_data_start(raw_df)
+    df = raw_df.iloc[data_start:].copy().reset_index(drop=True)
+    df.columns = range(len(df.columns))
+
+    date_valid = pd.Series(False, index=df.index)
+    code_valid = pd.Series(False, index=df.index)
+    if 2 in df.columns:
+        date_valid = pd.to_datetime(df[2], errors="coerce", dayfirst=True).notna()
+    if 15 in df.columns:
+        code_valid = df[15].notna() & df[15].astype(str).str.strip().ne("")
+
+    valid_idx = df.index[date_valid | code_valid].tolist()
+    if not valid_idx:
+        raise ValueError(t("err_no_visit_date_or_code"))
+
+    return df.iloc[:max(valid_idx) + 1].copy()
+
+
 def _looks_like_idus_204_source(file_bytes: bytes) -> bool:
-    """Detect the original 204-column IDUs source workbook before normal Smart Mapping."""
+    """Detect the original 204/205-column IDUs source workbook before normal Smart Mapping."""
     try:
-        sample = pd.read_excel(io.BytesIO(file_bytes), header=None, skiprows=4, nrows=10)
+        sample = _read_idus_204_source_raw(file_bytes).head(10)
         if sample.shape[1] < 180:
             return False
-        has_visit_date = 2 in sample.columns and pd.to_datetime(sample[2], errors="coerce").notna().sum() >= 1
-        has_code = 15 in sample.columns and sample[15].notna().sum() >= 1
-        return bool(has_visit_date and has_code)
+        has_visit_date = 2 in sample.columns and pd.to_datetime(sample[2], errors="coerce", dayfirst=True).notna().sum() >= 1
+        has_serial = 0 in sample.columns and pd.to_numeric(sample[0], errors="coerce").notna().sum() >= 1
+        return bool(has_visit_date and has_serial)
     except Exception:
         return False
 
@@ -434,19 +493,7 @@ def _convert_idus_204_source_bytes(file_bytes: bytes) -> Tuple[pd.DataFrame, Any
     import warnings as _ww
     _ww.filterwarnings("ignore")
 
-    _dfs = pd.read_excel(io.BytesIO(file_bytes), header=None, skiprows=4)
-    _dfs.columns = range(len(_dfs.columns))
-
-    if _dfs.shape[1] < 180:
-        raise ValueError(t("err_not_204_sheet"))
-
-    _last_code = _dfs[15].last_valid_index() if 15 in _dfs.columns else None
-    _last_date = _dfs[2].last_valid_index() if 2 in _dfs.columns else None
-    _valid_last = [x for x in [_last_code, _last_date] if x is not None]
-    if not _valid_last:
-        raise ValueError(t("err_no_visit_date_or_code"))
-    _last_row = max(_valid_last)
-    _dfs = _dfs.iloc[:_last_row + 1].copy()
+    _dfs = _read_idus_204_source_raw(file_bytes)
 
     def _c(i):
         return _dfs[i-1] if (i-1) in _dfs.columns else pd.Series([None] * len(_dfs), index=_dfs.index)
@@ -566,14 +613,7 @@ if "تحويل" in _upload_mode or "Convert" in _upload_mode:
                     import warnings as _ww
                     _ww.filterwarnings("ignore")
 
-                    _dfs = pd.read_excel(io.BytesIO(_src_b), header=None, skiprows=4)
-                    _dfs.columns = range(len(_dfs.columns))
-
-                    # ── وقّف عند آخر صف فيه كود مجمع أو تاريخ زيارة ──
-                    _last_code = _dfs[15].last_valid_index()  # الكود المجمع
-                    _last_date = _dfs[2].last_valid_index()   # تاريخ الزيارة
-                    _last_row  = max(x for x in [_last_code, _last_date] if x is not None)
-                    _dfs = _dfs.iloc[:_last_row + 1].copy()
+                    _dfs = _read_idus_204_source_raw(_src_b)
 
                     def _c(i): return _dfs[i-1] if (i-1) in _dfs.columns else pd.Series([None]*len(_dfs))
                     def _yq(yn, qty):
@@ -836,10 +876,14 @@ if date_col_main:
                 _month_filter_kind = "range"
                 _from_month = _from_m
                 _to_month = _to_m
-                hdf = hdf[
-                    (hdf[date_col_main].dt.to_period('M').astype(str) >= _from_m) &
-                    (hdf[date_col_main].dt.to_period('M').astype(str) <= _to_m)
-                ].copy()
+                _period_s_main = hdf[date_col_main].dt.to_period('M').astype(str)
+                _range_mask_main = (_period_s_main >= _from_m) & (_period_s_main <= _to_m)
+                # If the selected range covers the full available upload period
+                # (e.g. Jan→Jun), keep rows whose date failed parsing so a single
+                # beneficiary is not silently dropped from 905 to 904.
+                if _available_months and _from_m <= _available_months[0] and _to_m >= _available_months[-1]:
+                    _range_mask_main = _range_mask_main | hdf[date_col_main].isna()
+                hdf = hdf[_range_mask_main].copy()
         with _mf3:
             st.markdown(f'<div class="info-box" style="margin-top:1.5rem;">📊 {t("records_displayed")}: <b style="color:#7c6aff">{len(hdf):,}</b> {t("of_total")} <b>{len(st.session_state["hdf"]):,}</b></div>', unsafe_allow_html=True)
         st.markdown("---")
@@ -970,7 +1014,7 @@ def build_visit_chart_df(source_df: pd.DataFrame) -> pd.DataFrame:
                 'الشهر': pd.to_datetime(row.get(date_col), errors='coerce').to_period('M').strftime('%Y-%m') if pd.notna(pd.to_datetime(row.get(date_col), errors='coerce')) else None,
                 'الفئة العمرية': row.get(age_col0) if age_col0 else None,
                 'النوع': row.get(gender_col0) if gender_col0 else None,
-                'المنطقة': row.get(area_col0) if area_col0 else None,
+                'المنطقة': unify_area_name(row.get(area_col0)) if area_col0 else None,
                 'المحافظة': row.get(gov_col0) if gov_col0 else None,
                 'نتيجة التحليل': row.get(result_col) if result_col else None,
             }
@@ -1003,6 +1047,29 @@ def build_visit_chart_df(source_df: pd.DataFrame) -> pd.DataFrame:
 # Charts use the full source + period masks, so follow-ups are counted even when
 # the original/base visit happened before the selected month.
 visit_chart_df = build_visit_chart_df(st.session_state["hdf"])
+
+# Central period metrics used by cards, summary, targets, and donor reports.
+# Follow-up visits and follow-up HIV tests are intentionally kept separate from target-counted indicators.
+try:
+    report_ctx = build_report_context(
+        st.session_state["hdf"],
+        _month_filter_kind,
+        _selected_month,
+        _from_month,
+        _to_month,
+    )
+    base_visits_total = int(report_ctx.get("base_visits", base_visits_total))
+    total_fu_visits = int(report_ctx.get("followup_visits", total_fu_visits))
+    has_followup = total_fu_visits
+    no_followup = max(base_visits_total - has_followup, 0)
+    total = base_visits_total + total_fu_visits if _month_filter_kind in ["single", "range"] else base_visits_total
+    positive = int(report_ctx.get("basic_positive", positive))
+    # Indicators dashboard follows target-counted/base-visit logic. Donor reports still use the full context for follow-up details.
+    referrals = int(report_ctx.get("basic_positive", referrals))
+    refused_test = int(report_ctx.get("no_test_result", refused_test))
+except Exception as _ctx_err:
+    report_ctx = None
+    st.warning(f"تعذر بناء ملخص الفترة الديناميكي: {_ctx_err}")
 
 
 # ── Monthly summary + export helpers ──
@@ -1244,7 +1311,11 @@ def build_monthly_summary_tables(base_df: pd.DataFrame, full_df: pd.DataFrame, v
     compact_df = pd.DataFrame(compact_rows, columns=[t('tbl_count'), t('tbl_item')])
     return detailed_df, compact_df
 
-summary_report_df, picture_table_df = build_monthly_summary_tables(hdf, st.session_state['hdf'], visit_chart_df)
+if report_ctx is not None:
+    picture_table_df = build_summary_display_df(report_ctx)
+    summary_report_df = picture_table_df.copy()
+else:
+    summary_report_df, picture_table_df = build_monthly_summary_tables(hdf, st.session_state['hdf'], visit_chart_df)
 export_hdf = get_period_export_df(hdf, st.session_state['hdf'])
 
 # ── Quality Score Banner (auto-run on file load) ──
@@ -1517,22 +1588,18 @@ with tab_stats:
     if area_col:
         ch5, ch6 = st.columns(2)
         with ch5:
-            _group_area_fw = st.checkbox(
-                "تجميع حسب أول كلمة فقط" if st.session_state["lang"] == "ar" else "Group by first word only",
-                key="group_area_fw"
-            )
-            if _group_area_fw:
-                _area_series = visit_chart_df['المنطقة'].dropna().astype(str).str.strip().str.split().str[0]
-            else:
-                _area_series = visit_chart_df['المنطقة'].dropna()
+            _area_series = visit_chart_df['المنطقة'].dropna().astype(str).apply(unify_area_name)
             area_counts = _area_series.value_counts().reset_index()
             area_counts.columns = ['المنطقة', 'العدد']
-            fig_area = px.bar(area_counts, x='المنطقة', y='العدد',
-                             title=t("chart_area"), template='plotly_dark',
+            area_counts = area_counts.sort_values('العدد', ascending=True)
+            fig_area = px.bar(area_counts, x='العدد', y='المنطقة', orientation='h',
+                             title=t("chart_area"), template='plotly_dark', text='العدد',
                              labels={'المنطقة': t('chart_label_area'), 'العدد': t('chart_label_count')},
                              color_discrete_sequence=['#ff6b9d'])
-            fig_area.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)')
-            fig_area = show_bar_values(fig_area)
+            fig_area.update_traces(textposition='outside', cliponaxis=False)
+            fig_area.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,13,26,1)',
+                                   height=max(360, 42 * len(area_counts) + 120),
+                                   margin=dict(l=120, r=40, t=60, b=40))
             st.plotly_chart(fig_area, use_container_width=True)
 
         with ch6:
@@ -1696,16 +1763,22 @@ with tab_summary:
     _period_label = _selected_month or ((_from_month + f' {t("period_to")} ' + _to_month) if _from_month and _to_month else t("period_all"))
     st.markdown(f"### {_summary_tab_label}")
     st.caption(f"{t('period_summary_caption')}: {_period_label}")
-    st.dataframe(picture_table_df, use_container_width=True, hide_index=True, height=500)
+    st.dataframe(picture_table_df, use_container_width=True, hide_index=True, height=620)
 
-    _compact_buf = io.BytesIO()
-    with pd.ExcelWriter(_compact_buf, engine='openpyxl') as _writer:
-        summary_report_df.to_excel(_writer, index=False, sheet_name='تقرير الفترة')
-        picture_table_df.to_excel(_writer, index=False, sheet_name='ملخص البيانات')
+    if report_ctx is not None:
+        _compact_bytes = build_summary_excel_bytes(report_ctx)
+        _summary_kind = "ملخص_شهري" if _month_filter_kind == "single" else "ملخص_نطاق"
+    else:
+        _compact_buf = io.BytesIO()
+        with pd.ExcelWriter(_compact_buf, engine='openpyxl') as _writer:
+            summary_report_df.to_excel(_writer, index=False, sheet_name='تقرير الفترة')
+            picture_table_df.to_excel(_writer, index=False, sheet_name='ملخص البيانات')
+        _compact_bytes = _compact_buf.getvalue()
+        _summary_kind = "ملخص"
     st.download_button(
         t("download_summary_excel"),
-        data=_compact_buf.getvalue(),
-        file_name=f"{t('summary_filename_prefix')}_{_period_label}.xlsx".replace(" ", "_"),
+        data=_compact_bytes,
+        file_name=f"{_summary_kind}_{_period_label}.xlsx".replace(" ", "_"),
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
         key="download_picture_table"
@@ -1963,14 +2036,16 @@ with tab_indicators:
     </div>
     """, unsafe_allow_html=True)
 
-    refusal_rate    = round((refused_test / total * 100), 1) if total > 0 else 0
-    positivity_rate = round((positive     / total * 100), 1) if total > 0 else 0
-    followup_rate   = round((has_followup / total * 100), 1) if total > 0 else 0
+    _indicator_denominator = base_visits_total if base_visits_total > 0 else total
+    _target_counted_tests = int(report_ctx.get("basic_tests", base_visits_total - refused_test)) if report_ctx else base_visits_total - refused_test
+    refusal_rate    = round((refused_test / _indicator_denominator * 100), 1) if _indicator_denominator > 0 else 0
+    positivity_rate = round((positive     / _indicator_denominator * 100), 1) if _indicator_denominator > 0 else 0
+    followup_rate   = round((has_followup / _indicator_denominator * 100), 1) if _indicator_denominator > 0 else 0
     referral_rate   = round((referrals    / positive * 100), 1) if positive > 0 else 0
 
     _ind_cols = st.columns(5)
     for _i, (_name, _val, _rate, _clr) in enumerate([
-        ("HIV Tests",     base_visits_total - refused_test, None,            "#7c6aff"),
+        ("HIV Tests",     _target_counted_tests, None,            "#7c6aff"),
         ("Positive",      positive,         positivity_rate, "#ff6b6b"),
         ("Referrals",     referrals,        referral_rate,   "#6bff8e"),
         ("Follow-up Visits", total_fu_visits, followup_rate, "#6bb3ff"),
@@ -2011,7 +2086,7 @@ with tab_indicators:
     }
     _actuals_t6 = {
         "reached":    base_visits_total,
-        "hiv_tests":  base_visits_total - refused_test,  # actual tests performed = reached minus refused (blank result); Global Fund indicator excludes follow-ups
+        "hiv_tests":  _target_counted_tests,  # target-counted HIV tests; follow-up tests are reported separately
         "positive":   positive,
         "referrals":  referrals,
         "followups":  total_fu_visits,
@@ -2075,95 +2150,50 @@ with tab_indicators:
     # ── Donor Report ──
     st.markdown("---")
     st.markdown("### 📄 Donor Report")
-    if st.button("📋 Generate Monthly Report", key="gen_report", use_container_width=False):
-        try:
-            import matplotlib as mpl
-            mpl.use('Agg')
-            import matplotlib.pyplot as plt
-            from docx import Document
-            from docx.shared import Inches, Pt, RGBColor
-            from docx.enum.text import WD_ALIGN_PARAGRAPH
-            import tempfile
-        except Exception as e:
-            st.error("Required libraries for report generation are not available: %s" % e)
-            st.stop()
+    st.caption("التقارير تخرج حسب اختيار عرض البيانات الحالي: شهر واحد / نطاق / الكل. نموذج UNDP العربي خيار منفصل.")
 
-        def _make_bar(labels, values, title, color="#7c6aff"):
-            fig, ax = plt.subplots(figsize=(6,3.5), facecolor="white")
-            ax.bar(labels, values, color=color, edgecolor="white")
-            ax.set_title(title, fontsize=11, fontweight="bold")
-            ax.set_facecolor("#f8f8f8")
-            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-            for b, v in zip(ax.patches, values):
-                ax.text(b.get_x()+b.get_width()/2, b.get_height()+max(values)*0.01,
-                        str(v), ha="center", fontsize=9, fontweight="bold")
-            plt.tight_layout()
-            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-            plt.savefig(tmp.name, dpi=150, bbox_inches="tight"); plt.close()
-            return tmp.name
-
-        def _build_doc(lang_code):
-            doc = Document()
-            for sec in doc.sections:
-                sec.top_margin=Inches(1); sec.bottom_margin=Inches(1)
-                sec.left_margin=Inches(1.2); sec.right_margin=Inches(1.2)
-            is_ar = lang_code == "ar"
-            p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            r = p.add_run("DataBridge — M&E Hub for Health Programs")
-            r.bold=True; r.font.size=Pt(18); r.font.color.rgb=RGBColor(0x7c,0x6a,0xff)
-            p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p2.add_run("التقرير الشهري — Be Frienders 2026" if is_ar else "Monthly Report — Be Frienders 2026").font.size=Pt(13)
-            p3 = doc.add_paragraph(); p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p3.add_run(datetime.now().strftime("%B %Y")).font.size=Pt(11)
-            doc.add_paragraph("─"*60)
-            h = doc.add_heading("الملخص التنفيذي" if is_ar else "Executive Summary", level=1)
-            h.runs[0].font.color.rgb = RGBColor(0x7c,0x6a,0xff)
-            doc.add_paragraph(
-                f"إجمالي المستفيدين: {total:,} | إيجابي: {positive} ({positivity_rate}%) | إحالات: {referrals} | متابعة: {followup_rate}% | رفض: {refusal_rate}%"
-                if is_ar else
-                f"Beneficiaries: {total:,} | Positive: {positive} ({positivity_rate}%) | Referrals: {referrals} | Follow-up: {followup_rate}% | Refusal: {refusal_rate}%"
-            )
-            h2 = doc.add_heading("مؤشرات الأداء" if is_ar else "Key Performance Indicators", level=1)
-            h2.runs[0].font.color.rgb = RGBColor(0x7c,0x6a,0xff)
-            tbl = doc.add_table(rows=1+len(_kpi_labels_t6), cols=4)
-            tbl.style = "Table Grid"
-            _target_col_label = f"{_sel_q_t6} Target"
-            for ci, ch in enumerate(["Indicator","Actual",_target_col_label,"Achievement"]):
-                tbl.rows[0].cells[ci].text = ch
-                tbl.rows[0].cells[ci].paragraphs[0].runs[0].bold = True
-            for ri, (kk, kname) in enumerate(_kpi_labels_t6.items(), 1):
-                act = _actuals_t6[kk]; ann = st.session_state["kpi_targets"][kk][_q_key]
-                pct = f"{round(act/ann*100,1)}%" if ann>0 else "N/A"
-                for ci, val in enumerate([kname, str(act), str(ann), pct]):
-                    tbl.rows[ri].cells[ci].text = val
-            doc.add_paragraph()
-            h3 = doc.add_heading("الرسوم البيانية" if is_ar else "Charts", level=1)
-            h3.runs[0].font.color.rgb = RGBColor(0x7c,0x6a,0xff)
-            _ch = _make_bar(list(_kpi_labels_t6.values()), list(_actuals_t6.values()), "Actual Values")
-            doc.add_picture(_ch, width=Inches(5.5))
-            if qs:
-                h4 = doc.add_heading("جودة البيانات" if is_ar else "Data Quality", level=1)
-                h4.runs[0].font.color.rgb = RGBColor(0x7c,0x6a,0xff)
-                doc.add_paragraph(f"Score: {qs['score']}% — {qs['status']} | Critical: {qs['critical']} | Major: {qs['major']}")
-            doc.add_paragraph("─"*60)
-            fp = doc.add_paragraph(); fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            fp.add_run(f"Auto-generated by DataBridge — {datetime.now().strftime('%Y-%m-%d')}").font.size=Pt(9)
-            buf = io.BytesIO(); doc.save(buf); buf.seek(0)
-            return buf.getvalue()
-
-        with st.spinner(t("generating_reports_spinner")):
-            _r_ar = _build_doc("ar"); _r_en = _build_doc("en")
-        _rc1, _rc2 = st.columns(2)
-        with _rc1:
-            st.download_button(t("download_report_ar"), _r_ar,
-                f"BeF_Report_AR_{datetime.now().strftime('%Y%m')}.docx",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_r_ar")
-        with _rc2:
-            st.download_button(t("download_report_en"), _r_en,
-                f"BeF_Report_EN_{datetime.now().strftime('%Y%m')}.docx",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_r_en")
-        st.success(t("reports_generated_success"))
-
+    if report_ctx is None:
+        st.warning("لا يمكن إنشاء التقارير قبل بناء ملخص الفترة.")
+    else:
+        if _month_filter_kind == "single":
+            _report_options = {
+                "حزمة شهرية: التقرير الشهري + M&E Report + Summary Excel": "single_month",
+                "نموذج UNDP العربي — خيار منفصل": "undp_quarterly",
+            }
+        else:
+            _report_options = {
+                "حزمة نطاق/ربع سنة: M&E Report + Summary Excel": "range",
+                "نموذج UNDP العربي — خيار منفصل": "undp_quarterly",
+            }
+        _report_choice = st.radio(
+            "نوع التقرير:" if st.session_state["lang"] == "ar" else "Report type:",
+            list(_report_options.keys()),
+            horizontal=False,
+            key="donor_report_type",
+        )
+        _package_type = _report_options[_report_choice]
+        _period_safe = str(report_ctx.get("period_label", "period")).replace(" ", "_").replace("/", "-")
+        if st.button("📦 Generate Donor Report Package", key="gen_report", use_container_width=False):
+            try:
+                # Pass the currently-entered KPI targets to the report engine.
+                # report_ctx is created before the Targets Management inputs are rendered,
+                # so without this copy the M&E report cannot see Q1/Q2/Q3/Q4/Annual targets.
+                _export_ctx = dict(report_ctx)
+                _export_ctx["kpi_targets"] = st.session_state.get("kpi_targets", {})
+                _export_ctx["target_key"] = _q_key
+                _export_ctx["target_label"] = _sel_q_t6
+                _zip_bytes = build_donor_package(_export_ctx, _package_type)
+                st.download_button(
+                    "⬇️ Download Report Package",
+                    data=_zip_bytes,
+                    file_name=f"DataBridge_Report_{_period_safe}.zip",
+                    mime="application/zip",
+                    key="dl_donor_package",
+                    use_container_width=True,
+                )
+                st.success("تم إنشاء حزمة التقارير بنجاح.")
+            except Exception as e:
+                st.error(f"حدث خطأ أثناء إنشاء التقارير: {e}")
 
 
 # ──────────────────────────────────────
@@ -2524,14 +2554,7 @@ with tab_converter:
                     import warnings as _w
                     _w.filterwarnings("ignore")
 
-                    _df_src = pd.read_excel(io.BytesIO(_src_bytes), header=None, skiprows=4)
-                    _df_src.columns = range(len(_df_src.columns))
-
-                    # ── وقّف عند آخر صف فيه كود مجمع أو تاريخ زيارة ──
-                    _lc = _df_src[15].last_valid_index()
-                    _ld = _df_src[2].last_valid_index()
-                    _lr = max(x for x in [_lc, _ld] if x is not None)
-                    _df_src = _df_src.iloc[:_lr + 1].copy()
+                    _df_src = _read_idus_204_source_raw(_src_bytes)
 
                     def _col(i):
                         return _df_src[i-1] if (i-1) in _df_src.columns else pd.Series([None]*len(_df_src))
