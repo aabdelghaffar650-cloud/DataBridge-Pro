@@ -34,10 +34,12 @@ __pycache__/
 *.xlsx
 *.xlsm
 
-# But keep official templates if needed
-!databridge-v2-pro/templates/*.xlsx
-!databridge-v2-pro/templates/*.docx
-!databridge-v2-pro/templates/*.pdf
+# Keep official templates bundled with the app
+!databridge-v2-pro/templates/
+!databridge-v2-pro/templates/**/
+!databridge-v2-pro/templates/**/*.xlsx
+!databridge-v2-pro/templates/**/*.docx
+!databridge-v2-pro/templates/**/*.pdf
 
 # =========================
 # PyInstaller

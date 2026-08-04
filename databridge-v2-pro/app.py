@@ -41,6 +41,7 @@ from modules.quality_engine import run_quality_engine, compute_quality_score
 from modules.source_converter import format_idus_source_date
 from modules.data_cleaner import smart_read_excel, clean_dataframe, report_to_dataframe, mapping_report_to_dataframe, generate_standard_df, get_mapping_summary, save_mapping_memory_from_report
 from modules.data_repair_center import render_data_repair_center
+from modules.stock_management import render_stock_management_tab
 from modules.reports import build_report_context, build_summary_display_df, build_summary_excel_bytes, build_donor_package, unify_area_name
 
 # ────────────────────────────────────────────────────────────────
@@ -1396,13 +1397,14 @@ _summary_tab_label = (
     if _month_filter_kind == "single" and _selected_month
     else t("summary_tab_default")
 )
-tab_data, tab_repair, tab_gaps, tab_stats, tab_summary, tab_export, tab_quality, tab_indicators, tab_ai, tab_settings, tab_converter = st.tabs([
+tab_data, tab_repair, tab_gaps, tab_stats, tab_summary, tab_export, tab_stock, tab_quality, tab_indicators, tab_ai, tab_settings, tab_converter = st.tabs([
     t("tab_data"),
     t("tab_repair"),
     t("tab_gaps"),
     t("tab_stats"),
     _summary_tab_label,
     t("tab_export"),
+    "📦 إدارة المخزن" if st.session_state.get("lang") == "ar" else "📦 Stock",
     t("tab_quality"),
     t("tab_indicators"),
     t("tab_ai"),
@@ -1867,6 +1869,17 @@ with tab_export:
 # ──────────────────────────────────────
 #  TAB 5 — DATA QUALITY ENGINE (Phase 2)
 # ──────────────────────────────────────
+
+# ──────────────────────────────────────
+#  STOCK MANAGEMENT TAB
+# ──────────────────────────────────────
+with tab_stock:
+    render_stock_management_tab(
+        st.session_state["hdf"],
+        st.session_state.get("lang", "ar"),
+        default_month=_selected_month,
+    )
+
 with tab_quality:
     st.markdown(f"""
     <div style="margin-bottom:1.5rem;">
